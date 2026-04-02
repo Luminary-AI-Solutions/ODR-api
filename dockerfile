@@ -42,13 +42,14 @@ RUN uv run python -m playwright install --with-deps
 COPY app/ ./app/
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PORT=8000
+ENV PORT=8000 \
+    HOME=/home/appuser
 
 EXPOSE 8000
 
-# Run as non-root for security
-RUN useradd --no-create-home --shell /bin/false appuser \
- && chown -R appuser /app
+# Non-root user with a real home dir — crawl4ai writes under ~/.crawl4ai at import time
+RUN useradd -m -d /home/appuser --shell /bin/false appuser \
+ && chown -R appuser:appuser /app /home/appuser
 USER appuser
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
