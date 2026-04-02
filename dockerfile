@@ -35,8 +35,12 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-# Install Playwright browsers before copying source — avoids re-downloading on every code change
-RUN uv run python -m playwright install --with-deps
+# Shared browser install path — default is ~/.cache/ms-playwright, which differs for root vs appuser
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Install browsers before copying app — layer cached when only app/ changes
+RUN mkdir -p /ms-playwright \
+ && uv run python -m playwright install --with-deps
 
 # Copy application source
 COPY app/ ./app/
@@ -49,7 +53,7 @@ EXPOSE 8000
 
 # Non-root user with a real home dir — crawl4ai writes under ~/.crawl4ai at import time
 RUN useradd -m -d /home/appuser --shell /bin/false appuser \
- && chown -R appuser:appuser /app /home/appuser
+ && chown -R appuser:appuser /app /home/appuser /ms-playwright
 USER appuser
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
