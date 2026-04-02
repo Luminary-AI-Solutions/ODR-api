@@ -1,0 +1,29 @@
+[project]
+name = "odr-api"
+version = "0.1.0"
+description = "Open Deep Research API Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pydantic[email]>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pydantic-ai",
+    "python-dotenv>=1.0.0",
+    "litellm>=1.30.0",
+    "websockets>=11.0.3",
+    "httpx>=0.24.0",
+    "crawl4ai>=0.8.0",
+    "wikipedia-api>=0.6.0",
+    "markitdown",
+    "langchain-text-splitters",
+    "PyMuPDF",
+    "together",
+    "markdown>=3.5.1",
+    "firebase-admin",
+    "tiktoken",
+]
+
+[tool.uv]
+package = false

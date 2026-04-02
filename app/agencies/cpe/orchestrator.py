@@ -16,6 +16,8 @@ from .agents import get_cpe_agents, AgencyAgents
 from .prompts import EXTRACTOR_USER_MESSAGE_TEMPLATE, CPE_PLANNER_USER_TEMPLATE
 from app.core.schemas import RunUsage, SearchTask
 from app.core.config import AppSettings, SerperConfig
+from app.core.dependencies import get_settings
+from app.core.exceptions import ConfigurationError
 from app.agencies.services.search import SearchResult, execute_batch_serper_search
 # --- Add Firestore/Callback types for wrapper --- #
 from google.cloud.firestore_v1.document import DocumentReference # For type hinting
@@ -24,7 +26,18 @@ from .callbacks import CpeWebSocketUpdateHandler # Import the handler
 
 logger = logging.getLogger(__name__)
 
-async def run_cpe(request: CPERequest, config: CPEConfig, serper_config: SerperConfig,
+
+def _empty_usage_statistics() -> UsageStatistics:
+    """Return a schema-valid empty usage payload for early CPE failures."""
+    return UsageStatistics(
+        token_usage=None,
+        estimated_cost=None,
+        serper_queries_used=0,
+        sources_processed_count=0,
+        refinement_iterations_run=0,
+    )
+
+async def run_cpe(request: CPERequest, agents_collection: AgencyAgents, config: CPEConfig, serper_config: SerperConfig,
                    # --- Add Callback/Firestore args to main function --- #
                    update_callback: Optional[CpeWebSocketUpdateHandler] = None,
                    task_doc_ref: Optional[DocumentReference] = None,
@@ -34,7 +47,6 @@ async def run_cpe(request: CPERequest, config: CPEConfig, serper_config: SerperC
     Executes the Company Profile Extractor workflow using planning and search.
     Handles callbacks and Firestore updates for progress.
     """
-    agents = get_cpe_agents(config)
     usage_tracker = RunUsage()
     profiles: List[CompanyProfile] = []
     all_search_results: List[SearchResult] = []
@@ -54,22 +66,51 @@ async def run_cpe(request: CPERequest, config: CPEConfig, serper_config: SerperC
             location=request.location or "Not specified",
             max_search_tasks=request.max_search_tasks
         )
-        
-        planner_result = await agents.planner.run(planner_user_prompt)
+
+        _app_s = get_settings()
+        _planner_model = getattr(agents_collection.planner.model, "model", None) or getattr(
+            agents_collection.planner.model, "model_name", None
+        )
+        _key_ok = bool(_app_s.openrouter_api_key and _app_s.openrouter_api_key.get_secret_value())
+        logger.info(
+            "CPE Planner OpenRouter: base_url=%s model=%s api_key_configured=%s",
+            _app_s.openrouter_api_base,
+            _planner_model,
+            _key_ok,
+        )
+
+        planner_result = await agents_collection.planner.run(planner_user_prompt)
         usage_tracker.update_agent_usage("planner", planner_result.usage())
 
-        planner_output: CPEPlannerOutput = planner_result.data
-        search_tasks = planner_output.search_tasks
-        logger.info(f"Planner generated {len(search_tasks)} search tasks.")
-        
+        planner_output: CPEPlannerOutput = planner_result.output
+        budget = request.max_search_tasks if request.max_search_tasks is not None else 5
+        search_tasks = list(planner_output.search_tasks)[:budget]
+        writing_plan = planner_output.writing_plan
+        if len(planner_output.search_tasks) > budget:
+            logger.info(
+                "Capped search tasks from %s to max_search_tasks=%s",
+                len(planner_output.search_tasks),
+                budget,
+            )
+        logger.info(f"Planner generated {len(search_tasks)} search tasks (budget {budget}).")
+
+        query_strings = [t.query for t in search_tasks if t.query]
+        plan_payload = {
+            "writing_plan": writing_plan.model_dump(mode='json'),
+            "search_task_count": len(search_tasks),
+            "search_queries": query_strings,
+        }
+        plan_details = {"plan": plan_payload}
+
         # --- Update Firestore with Plan --- #
         if firestore_available and task_doc_ref:
             try:
                 plan_update_data = {
                     "searchTasks": [t.model_dump(mode='json') for t in search_tasks],
                     "initialSearchTaskCount": len(search_tasks),
-                    "status": "PLANNING_COMPLETE", 
-                    "updatedAt": firestore.SERVER_TIMESTAMP
+                    "plan": plan_payload,
+                    "status": "PLANNING_COMPLETE",
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
                 }
                 task_doc_ref.update(plan_update_data)
                 logger.info(f"Updated Firestore with CPE plan.")
@@ -77,10 +118,25 @@ async def run_cpe(request: CPERequest, config: CPEConfig, serper_config: SerperC
                 logger.error(f"Failed to update Firestore with CPE plan: {fs_e}")
         # --- End Firestore Update --- #
 
-        if update_callback: await update_callback.planning_end(len(search_tasks))
+        if update_callback:
+            await update_callback.planning_end(plan_details)
 
     except Exception as e:
-        logger.error(f"Planner agent failed: {e}", exc_info=True)
+        msg = str(e).lower()
+        try:
+            _app_s = get_settings()
+            _has_key = bool(_app_s.openrouter_api_key and _app_s.openrouter_api_key.get_secret_value())
+        except Exception:
+            _has_key = False
+        if not _has_key:
+            kind = "configuration (no API key)"
+        elif any(x in msg for x in ("connection", "connect", "timeout", "timed out", "name resolution", "refused")):
+            kind = "network/transport"
+        elif "maximum retries" in msg and "validation" in msg:
+            kind = "model output validation (provider likely reached; schema mismatch)"
+        else:
+            kind = "other"
+        logger.error("CPE Planner failed [%s]: %s: %s", kind, type(e).__name__, e, exc_info=True)
         if update_callback: await update_callback.planning_error(e)
         # Return error response with current usage stats
         return CPEResponse(profiles=[], usage_statistics=usage_tracker.get_statistics())
@@ -192,10 +248,10 @@ async def run_cpe(request: CPERequest, config: CPEConfig, serper_config: SerperC
                 logger.debug(f"Calling extractor agent for domain: {domain}")
                 if update_callback: await update_callback.extraction_calling_llm(domain)
                 
-                extractor_result = await agents.extractor.run(user_prompt)
+                extractor_result = await agents_collection.extractor.run(user_prompt)
                 usage_tracker.update_agent_usage("extractor", extractor_result.usage())
 
-                extracted_data: ExtractedCompanyData = extractor_result.data
+                extracted_data: ExtractedCompanyData = extractor_result.output
                 logger.debug(f"Extractor agent returned data for {domain}")
 
                 # --- 3d: Create Profile --- 
@@ -304,12 +360,7 @@ async def run_cpe_wrapper(
     """
     # Construct SerperConfig from application settings
     try:
-        serper_config = SerperConfig(
-            api_key=app_settings.serper_api_key,
-            base_url=app_settings.serper_base_url,
-            default_location=app_settings.serper_default_location,
-            timeout=app_settings.serper_timeout
-        )
+        serper_config = app_settings.build_serper_config()
     except Exception as e:
         logger.critical(f"Failed to configure SerperConfig for CPE: {e}", exc_info=True)
         if update_callback:
@@ -320,11 +371,12 @@ async def run_cpe_wrapper(
                 "error": "Serper Config Error",
                 "completedAt": firestore.SERVER_TIMESTAMP
             })
-        return CPEResponse(profiles=[], usage_statistics=UsageStatistics())
+        return CPEResponse(profiles=[], usage_statistics=_empty_usage_statistics())
     # Run main orchestration
     try:
         result = await run_cpe(
             request=request,
+            agents_collection=agents_collection,
             config=config,
             serper_config=serper_config,
             update_callback=update_callback,
@@ -342,4 +394,4 @@ async def run_cpe_wrapper(
                 "error": f"Critical Orchestration Error: {e}",
                 "completedAt": firestore.SERVER_TIMESTAMP
             })
-        return CPEResponse(profiles=[], usage_statistics=UsageStatistics()) 
+        return CPEResponse(profiles=[], usage_statistics=_empty_usage_statistics())

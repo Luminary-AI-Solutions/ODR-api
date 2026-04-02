@@ -27,7 +27,7 @@
 *   **Advanced Content Scraping:** Uses [Crawl4AI](https://github.com/extractus/crawl4ai) (`app/services/scraper/crawl4ai_scraper.py`) for robust web content extraction, including utilities for handling complex sites and formats like PDFs.
 *   **Content Reranking:** Employs reranking models (e.g., via Together AI API) to prioritize the most relevant search results and text chunks for LLM context (`app/agencies/services/ranking.py`, used by `helpers.py`).
 *   **Asynchronous Streaming:** Provides real-time progress updates via WebSockets (see `websocket_guide.md`).
-*   **Configurable:** Easily override default LLM models, API keys, and workflow parameters via environment variables (`app/core/config.py`) and API request payloads.
+*   **Configurable:** Shared provider credentials live in environment variables, while each agency/task can use its own model IDs via env-backed config.
 *   **Optional State Persistence:** Can track task status and store final results using Firestore (`firestore_schema.md`).
 
 ## 🏛️ Core Architecture Principles
@@ -98,72 +98,74 @@ This approach replaces the need for external libraries like LiteLLM solely for m
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/odr-api.git # Replace with actual repo URL
-    cd odr-api
+    git clone https://github.com/siddiki8/ODR-api.git
+    cd ODR-api
     ```
-2.  **Create and activate a virtual environment:**
+2.  **Install [uv](https://docs.astral.sh/uv/)** (recommended) if you do not have it:
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+    # Windows (PowerShell)
+    irm https://astral.sh/uv/install.ps1 | iex
+    # macOS / Linux
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
-3.  **Install dependencies:**
+3.  **Install dependencies** (uses `pyproject.toml` + `uv.lock`):
     ```bash
-    pip install -r requirements.txt
-    playwright install --with-deps
+    uv sync
+    uv run python -m playwright install --with-deps
     ```
+    Alternatively, with plain pip: `pip install -r requirements.txt` (file is generated from the lockfile via `uv export`) and then `playwright install --with-deps`.
 
 ## 🔧 Configuration
 
 The API relies on environment variables for configuration, particularly API keys.
 
 1.  Create a `.env` file in the project root directory.
-2.  Copy the contents of `.env.example` (you should create this file) into `.env`.
-3.  Fill in the required API keys and adjust any other settings:
+2.  Copy `.env.example` to `.env` and fill in your credentials:
 
     ```dotenv
-    # .env Example
-    LOG_LEVEL=INFO
-
-    # Serper API Key (Required for search)
+    # Shared provider credentials
     SERPER_API_KEY="your_serper_api_key"
-
-    # Together AI API Key (Required for reranking)
+    OPENROUTER_API_KEY="your_openrouter_api_key"
+    COHERE_API_KEY="your_cohere_api_key"
     TOGETHER_API_KEY="your_together_api_key"
 
-    # --- LLM API Keys ---
-    # Provide keys for the LLM providers you intend to use.
-    # Currently uses OpenAI client via OpenRouter, but architecture allows adding others.
-    OPENROUTER_API_KEY="your_openai_api_key"
-
-    # --- Firestore Configuration ---
-    # Required for task persistence - will work without.
+    # Optional: Firestore persistence (app runs fine without it)
     FIREBASE_SERVICE_ACCOUNT_KEY_JSON="/path/to/your/service-account-key.json"
+
+    # Deep Research task-level model selection
+    DEEP_RESEARCH_PLANNER_MODEL_ID="openrouter/openrouter/quasar-alpha"
+    DEEP_RESEARCH_SUMMARIZER_MODEL_ID="google/gemini-2.0-flash-001"
+    DEEP_RESEARCH_WRITER_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
+    DEEP_RESEARCH_REFINER_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
+    DEEP_RESEARCH_RERANK_PROVIDER="cohere"
+
+    # CPE task-level model selection
+    CPE_PLANNER_MODEL_ID="openrouter/openrouter/quasar-alpha"
+    CPE_EXTRACTOR_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
     ```
+
+    See `.env.example` for all available options including per-provider base URLs and scraper settings.
 
 ## ▶️ Usage
 
 1.  **Run the FastAPI server:**
     ```bash
-    uvicorn app.main:app --reload --port 8000
+    uv run uvicorn app.main:app --reload --port 8000
     ```
+    If you use a classic venv instead of uv, run `uvicorn app.main:app --reload --port 8000` with that environment activated.
     The API will be available at `http://localhost:8000`. Access the interactive docs at `http://localhost:8000/docs`.
 
 2.  **Interact via WebSocket:**
     *   The primary endpoint for the deep research agency is `/deep_research/ws/research`.
-    *   Connect using a WebSocket client (see `ws_client.py` for a Python example - run with `python ws_client.py }your query here").
+    *   Connect using a WebSocket client (see `clients/ws_client.py` — run with `python clients/ws_client.py "your query here"` from the repo root).
     *   Send an initial JSON message matching the `ResearchRequest` schema (`app/core/schemas.py`):
         ```json
         {
           "query": "Your research query here",
-          "planner_llm_config": null, // Optional override for agent LLM settings
-          "summarizer_llm_config": null, // Optional override
-          "writer_llm_config": null, // Optional override
-          "refiner_llm_config": null, // Optional override
-          // Other config overrides from DeepResearchConfig can go here
           "max_search_tasks": null
         }
         ```
-    *   Receive JSON status updates conforming to the structure in `websocket_guide.md`:
+    *   Receive JSON status updates conforming to the structure in [`websocket_guide.md`](websocket_guide.md) (also see [`docs/FRONTEND_API.md`](docs/FRONTEND_API.md) for a concise frontend reference):
         ```json
         {
           "step": "STEP_NAME", // e.g., "PLANNING", "SEARCHING", "RANKING", "PROCESSING", "WRITING", "REFINING", "FINALIZING", "COMPLETE", "ERROR"
@@ -174,11 +176,17 @@ The API relies on environment variables for configuration, particularly API keys
         ```
     *   The final success message (`step: "COMPLETE", status: "END"`) includes final usage statistics in `details`. The actual report content is sent earlier in the `step: "FINALIZING", status: "END"` message's `details`.
 
-3.  **Other Endpoints:**
-    *   `/settings`: GET endpoint to view current application settings (excluding secrets).
-    *   `/tasks`: GET endpoint to list persisted tasks from Firestore.
-    *   `/tasks/{task_id}`: GET endpoint to retrieve details of a specific task.
-    *   `/tasks/stop/{task_id}`: POST endpoint to request cancellation of a running task.
+3.  **Company Profile Extractor (CPE) Agency:**
+    *   WebSocket endpoint: `/cpe/ws/cpe` — send a `CPERequest` JSON message with `query`, optional `location`, and `max_search_tasks`.
+    *   Results (array of company profiles) arrive in the final `COMPLETE` message's `details`. See `clients/cpe_client.py` for a full example.
+
+4.  **Other Endpoints:**
+    *   `GET /` → health check.
+    *   `GET /deep_research/result/{task_id}` — fetch persisted deep research result from Firestore.
+    *   `POST /deep_research/stop/{task_id}` — request cancellation.
+    *   `GET /cpe/result/{task_id}` — fetch persisted CPE result from Firestore.
+    *   `POST /cpe/stop/{task_id}` — request cancellation.
+    *   See [`docs/FRONTEND_API.md`](docs/FRONTEND_API.md) for the full endpoint reference.
 
 ## 🤝 Contributing - Build Your Own Agents!
 
@@ -220,7 +228,7 @@ The API relies on environment variables for configuration, particularly API keys
 *   **Specialized Scrapers:** Add robust scrapers for specific sites or content types in `app/services/scraping_utils/`.
 *   **Error Handling & Resilience:** Refine exception handling, retries, and state management across the framework.
 *   **Testing:** Add more comprehensive unit, integration, and agent simulation tests.
-*   **Documentation:** Improve READMEs, code comments, architecture diagrams, or API documentation (`websocket_guide.md`, `firestore_schema.md`).
+*   **Documentation:** Improve READMEs, code comments, architecture diagrams, or API documentation (`websocket_guide.md`, `firestore_schema.md`, `docs/FRONTEND_API.md`).
 
 ## 📜 Citation
 

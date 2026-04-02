@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Literal
 from pydantic import HttpUrl
 import re
 
@@ -7,7 +7,7 @@ import re
 from app.core.exceptions import ScrapingError, ConfigurationError, SearchAPIError, RankingAPIError, ChunkingError
 from ..services.scraper import WebScraper, ExtractionResult
 from ..services.search import SearchResult, SearchTask
-from ..services.ranking import rerank_with_together_api, RankedItem
+from ..services.ranking import rerank_documents, RankedItem
 
 # --- Service Imports ---
 from ..services.search import execute_batch_serper_search, SerperConfig
@@ -196,7 +196,9 @@ async def rerank_search_results_helper(
     model: str,
     api_key: str,
     threshold: float,
-    logger: logging.Logger
+    logger: logging.Logger,
+    rerank_provider: Literal["cohere", "together"] = "cohere",
+    provider_base_url: Optional[str] = None,
 ) -> List[SearchResult]:
     """Reranks SearchResult objects based on query relevance using the ranking service.
 
@@ -230,12 +232,14 @@ async def rerank_search_results_helper(
     logger.info(f"Reranking {len(docs_for_reranking)} search results (Threshold: {threshold})...")
     try:
         # Call the ranking service
-        relevant_ranked_items: List[RankedItem] = await rerank_with_together_api(
+        relevant_ranked_items: List[RankedItem] = await rerank_documents(
             query=query,
             documents=docs_for_reranking,
             model=model,
             api_key=api_key,
-            relevance_threshold=threshold
+            provider=rerank_provider,
+            base_url=provider_base_url,
+            relevance_threshold=threshold,
         )
         logger.info(f"Search result reranking yielded {len(relevant_ranked_items)} items above threshold.")
 
@@ -270,7 +274,9 @@ async def rerank_chunks_helper(
     model: str,
     api_key: str,
     threshold: float,
-    logger: logging.Logger
+    logger: logging.Logger,
+    rerank_provider: Literal["cohere", "together"] = "cohere",
+    provider_base_url: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Reranks text chunks based on query relevance using the ranking service.
 
@@ -301,12 +307,14 @@ async def rerank_chunks_helper(
 
     logger.info(f"Reranking {len(docs_for_reranking)} chunks (Threshold: {threshold})...")
     try:
-        relevant_ranked_items: List[RankedItem] = await rerank_with_together_api(
+        relevant_ranked_items: List[RankedItem] = await rerank_documents(
             query=query,
             documents=docs_for_reranking,
             model=model,
             api_key=api_key,
-            relevance_threshold=threshold
+            provider=rerank_provider,
+            base_url=provider_base_url,
+            relevance_threshold=threshold,
         )
         logger.info(f"Chunk reranking yielded {len(relevant_ranked_items)} items above threshold.")
 

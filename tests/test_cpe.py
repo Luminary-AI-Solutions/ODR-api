@@ -1,11 +1,20 @@
+import sys
+from pathlib import Path
+
+# Repo root on sys.path so `import app` works when run as: python tests/test_cpe.py
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import os
 import asyncio
 # Add imports for dependencies and configs
 from app.core.dependencies import get_settings, get_api_keys
-from app.core.config import AppSettings, ApiKeys, SerperConfig
+from app.core.config import AppSettings, ApiKeys
 # Load dotenv if you need to load .env for testing
 from dotenv import load_dotenv, find_dotenv
 
+from app.agencies.cpe.agents import get_cpe_agents
 from app.agencies.cpe.config import CPEConfig
 from app.agencies.cpe.schemas import CPERequest
 from app.agencies.cpe.orchestrator import run_cpe
@@ -38,12 +47,7 @@ async def main():
 
     # --- Construct SerperConfig ---
     try:
-        serper_config = SerperConfig(
-            api_key=api_keys.serper_api_key,
-            base_url=settings.serper_base_url,
-            default_location=settings.serper_default_location,
-            timeout=settings.serper_timeout
-        )
+        serper_config = settings.build_serper_config()
     except Exception as e:
         print(f"Error creating SerperConfig: {e}")
         return # Exit if config creation fails
@@ -54,6 +58,12 @@ async def main():
     except Exception as e:
         print(f"Error loading CPEConfig: {e}")
         return # Exit if CPE config fails
+
+    try:
+        agents_collection = get_cpe_agents(config=cpe_config, settings=settings)
+    except Exception as e:
+        print(f"Error building CPE agents: {e}")
+        return
 
     # Define test query and location
     request = CPERequest(
@@ -67,6 +77,7 @@ async def main():
     try:
         response = await run_cpe(
             request=request,
+            agents_collection=agents_collection,
             config=cpe_config,
             serper_config=serper_config # Pass the constructed config
         )
@@ -77,4 +88,4 @@ async def main():
         print(f"Error during run_cpe execution: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

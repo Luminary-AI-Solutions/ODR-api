@@ -13,18 +13,18 @@ from firebase_admin import firestore
 from pydantic import ValidationError
 
 # --- Core Imports --- #
-from app.core.config import AppSettings, ApiKeys
+from app.core.config import AppSettings
 from app.core.exceptions import ConfigurationError, DeepResearchError # Correct base exception
 # --- CPE Specific Imports --- #
 from .schemas import CPERequest, CPEResponse # Use CPE schemas
 from .orchestrator import run_cpe_wrapper # Import the CPE wrapper
-from .agents import AgencyAgents, get_cpe_agents # Import CPE agent getter
+from .agents import AgencyAgents, get_cpe_agents as build_cpe_agents
 from .config import CPEConfig # Import CPE config
 from .callbacks import CpeWebSocketUpdateHandler # Import CPE handler
 
 # --- Shared State & Dependencies --- #
 from app.core.state import active_tasks # Import active_tasks
-from app.core.dependencies import get_settings, get_api_keys, get_firestore_db # Core dependencies (api_keys is used indirectly)
+from app.core.dependencies import get_settings, get_firestore_db
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -40,17 +40,23 @@ def get_cpe_config() -> CPEConfig:
         logger.error(f"Failed to load CPEConfig: {e}", exc_info=True)
         raise ConfigurationError(f"Could not load CPE agency configuration: {e}")
 
-# Dependency for CPE Agents is already defined in .agents module
-# We'll use get_cpe_agents directly in the route dependency list.
+def get_cpe_agent_collection(
+    settings: AppSettings = Depends(get_settings),
+    agency_config: CPEConfig = Depends(get_cpe_config),
+) -> AgencyAgents:
+    try:
+        return build_cpe_agents(config=agency_config, settings=settings)
+    except Exception as e:
+        logger.error(f"Failed to load CPE agents: {e}", exc_info=True)
+        raise ConfigurationError(f"Could not initialize CPE agents: {e}")
 
 # --- WebSocket Endpoint --- #
 @router.websocket("/ws/cpe")
 async def websocket_cpe_route(
     websocket: WebSocket,
     settings: AppSettings = Depends(get_settings),
-    # api_keys: ApiKeys = Depends(get_api_keys),  # Not required explicitly; get_cpe_agents uses OPENROUTER_API_KEY
     agency_config: CPEConfig = Depends(get_cpe_config),
-    agents_collection: AgencyAgents = Depends(get_cpe_agents),
+    agents_collection: AgencyAgents = Depends(get_cpe_agent_collection),
     db: Optional[Client] = Depends(get_firestore_db)
 ):
     """
@@ -277,7 +283,7 @@ async def websocket_cpe_route(
 
 
 # --- GET Endpoint for Results --- #
-@router.get("/cpe/result/{task_id}")
+@router.get("/result/{task_id}")
 async def get_cpe_result_route(
     task_id: str = Path(..., title="The ID of the CPE task to retrieve"),
     db: Optional[Client] = Depends(get_firestore_db)
@@ -297,7 +303,7 @@ async def get_cpe_result_route(
 
 
 # --- POST Endpoint to Stop/Cancel Task --- #
-@router.post("/cpe/stop/{task_id}", status_code=200)
+@router.post("/stop/{task_id}", status_code=200)
 async def stop_cpe_task_route(
     task_id: str = Path(..., title="The ID of the CPE task to request cancellation for"),
     db: Optional[Client] = Depends(get_firestore_db)

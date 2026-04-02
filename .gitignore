@@ -89,11 +89,11 @@ celerybeat-schedule.*
 
 # Environments
 .env
+ODR-api.env
 .venv
 venv/
 ENV/
 env/
-ENV/
 */env/
 */venv/
 
@@ -113,7 +113,16 @@ ENV/
 # VS Code
 .vscode/ 
 
-/downloaded_pdfs/*
+/downloaded_pdfs/
 
-#firebase key
+# Local dev scripts (WSL helpers, diagnostics)
+scripts/
+
+# Generated research output
+research_reports/
+
+# Test artefacts
+testoutput.json
+
+# Firebase key
 odr-key.json

@@ -1,7 +1,10 @@
+import logging
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Dict, Optional
 from collections import defaultdict
 from pydantic_ai.usage import Usage # Import the base Usage class
+
+logger = logging.getLogger(__name__)
 
 
 class SearchTask(BaseModel):
@@ -12,12 +15,43 @@ class SearchTask(BaseModel):
     num_results: int = Field(5, description="Desired number of search results.", ge=1, le=20)
     reasoning: Optional[str] = Field(None, description="Planner's reasoning for generating this specific search task.")
 
-    @field_validator('endpoint')
-    def validate_endpoint(cls, v: str) -> str:
-        allowed_endpoints = ['/search', '/scholar', '/news']
-        if v not in allowed_endpoints:
-            raise ValueError(f"Invalid endpoint '{v}'. Allowed: {allowed_endpoints}")
-        return v
+    @field_validator('endpoint', mode='before')
+    @classmethod
+    def normalize_endpoint(cls, v):
+        """LLMs often echo prompt placeholders like '/search | /scholar | /news' instead of one path."""
+        allowed = ['/search', '/scholar', '/news']
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return '/search'
+        s = str(v).strip().strip('"').strip("'")
+        if s in allowed:
+            return s
+        if '|' in s:
+            for part in s.split('|'):
+                p = part.strip().strip('"').strip("'")
+                if p in allowed:
+                    return p
+        low = s.lower()
+        if low in ('search', '/search'):
+            return '/search'
+        if low in ('scholar', '/scholar'):
+            return '/scholar'
+        if low in ('news', '/news'):
+            return '/news'
+        logger.warning("SearchTask.endpoint invalid value %r; defaulting to /search", v)
+        return '/search'
+
+    @field_validator('num_results', mode='before')
+    @classmethod
+    def clamp_num_results(cls, v):
+        if v is None:
+            return 5
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return 5
+        if n < 1 or n > 20:
+            logger.warning("SearchTask.num_results out of range (%r); clamping to [1, 20]", v)
+        return max(1, min(20, n))
 
 class TokenUsageCounter(BaseModel):
     """Stores token counts for a specific LLM role or the total."""

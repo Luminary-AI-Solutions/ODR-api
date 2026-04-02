@@ -378,7 +378,7 @@ To prevent premature disconnection, WebSocket protocols use **keepalive** mechan
 -   The other side (the server, like FastAPI/Uvicorn) automatically responds with a pong message.
 -   This exchange signals to all intermediaries that the connection is still active, even if no application data is flowing.
 
-**Client-Side:** The `websockets` library used in the example `ws_client.py` handles sending pings automatically by default. You can explicitly configure the `ping_interval` and `ping_timeout` when connecting if needed.
+**Client-Side:** The `websockets` library used in the example `clients/ws_client.py` handles sending pings automatically by default. You can explicitly configure the `ping_interval` and `ping_timeout` when connecting if needed.
 
 **Server-Side:** FastAPI/Uvicorn typically handles responding to pings automatically.
 

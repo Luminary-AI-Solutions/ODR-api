@@ -31,7 +31,6 @@ from .helpers import (
 from .callbacks import WebSocketUpdateHandler
 
 from ..services.search import SearchResult # Removed SearchTask import, using schemas.SearchTask
-from app.core.config import SerperConfig
 from app.core.exceptions import ConfigurationError
 from ..services.scraper import ExtractionResult
 from app.core.config import AppSettings
@@ -80,6 +79,25 @@ async def run_deep_research_orchestration(
         await update_callback.planning_start()
 
     try:
+        _planner_model = getattr(agents_collection.planner.model, "model", None) or getattr(
+            agents_collection.planner.model, "model_name", None
+        )
+        _key_ok = bool(
+            app_settings.openrouter_api_key
+            and app_settings.openrouter_api_key.get_secret_value()
+        )
+        logger.info(
+            "Planner OpenRouter context: base_url=%s model=%s api_key_configured=%s",
+            app_settings.openrouter_api_base,
+            _planner_model,
+            _key_ok,
+        )
+        if not _key_ok:
+            logger.error(
+                "OPENROUTER_API_KEY is missing in AppSettings; provider cannot be called. "
+                "Ensure ODR-api.env or .env is loaded (see app.core.config._load_repo_env_files)."
+            )
+
         # Run planner and directly get usage
         planner_result = await agents_collection.planner.run(
             agents._PLANNER_USER_MESSAGE_TEMPLATE.format(user_query=user_query)
@@ -89,12 +107,12 @@ async def run_deep_research_orchestration(
         usage_tracker.update_agent_usage("planner", planner_result.usage())
 
         # Revert: Expect PlannerOutput directly now that result_type is set
-        planner_output: schemas.PlannerOutput = planner_result.data
+        planner_output: schemas.PlannerOutput = planner_result.output
 
         # Type check for safety (optional, but good practice)
         if not isinstance(planner_output, schemas.PlannerOutput):
              logger.error(f"Planner agent returned unexpected type: {type(planner_output)}")
-             logger.error(f"Raw data: {planner_result.data}")
+             logger.error(f"Raw data: {planner_result.output}")
              # Log the model name used for the planner agent if available
              try:
                  model_name = agents_collection.planner.model.model if hasattr(agents_collection.planner.model, 'model') else 'N/A'
@@ -136,7 +154,26 @@ async def run_deep_research_orchestration(
             }
             await update_callback.planning_end(plan_details)
     except Exception as e:
-        logger.error(f"Planner agent failed: {e}", exc_info=True)
+        msg = str(e).lower()
+        if not app_settings.openrouter_api_key or not app_settings.openrouter_api_key.get_secret_value():
+            kind = "configuration (no API key)"
+        elif any(x in msg for x in ("connection", "connect", "timeout", "timed out", "name resolution", "refused", "unreachable")):
+            kind = "network/transport (likely not reaching OpenRouter or DNS/TLS)"
+        elif any(x in msg for x in ("401", "403", "invalid api key", "incorrect api key")):
+            kind = "authentication (key rejected by OpenRouter)"
+        elif "maximum retries" in msg and "validation" in msg:
+            kind = "model output validation (HTTP likely succeeded; JSON/schema mismatch — not a connectivity issue)"
+        elif "404" in msg and "model" in msg:
+            kind = "provider routing/model id (OpenRouter returned 404 for this model)"
+        else:
+            kind = "other"
+        logger.error(
+            "Planner agent failed [%s]: %s: %s",
+            kind,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         if update_callback:
             await update_callback.planning_error(e)
         # Return error response with current usage stats
@@ -153,7 +190,7 @@ async def run_deep_research_orchestration(
     initial_search_results: List[SearchResult] = []
     reranked_initial_search_results: List[SearchResult] = []
     try:
-        serper_cfg = SerperConfig.from_env()
+        serper_cfg = app_settings.build_serper_config()
         search_results_map = await execute_search_queries(
             search_tasks=search_tasks,
             config=serper_cfg,
@@ -184,7 +221,7 @@ async def run_deep_research_orchestration(
         if initial_search_results:
             if update_callback:
                 await update_callback.initial_rerank_start(len(initial_search_results))
-            api_key = config.together_api_key.get_secret_value()
+            api_key = app_settings.get_rerank_api_key(config.rerank_provider)
             model = config.reranker_model
             reranked_initial_search_results = await rerank_search_results_helper(
                  query=user_query,
@@ -192,7 +229,9 @@ async def run_deep_research_orchestration(
                  model=model,
                  api_key=api_key,
                  threshold=config.rerank_relevance_threshold,
-                 logger=logger
+                 logger=logger,
+                 rerank_provider=config.rerank_provider,
+                 provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
             )
         else:
             # If no results to rerank, send a simplified end update? Or skip?
@@ -314,8 +353,8 @@ async def run_deep_research_orchestration(
                 
                 # Attempt to access and log the summary content first
                 summary_content = None
-                if summarizer_result and hasattr(summarizer_result, 'data'):
-                    summary_content = summarizer_result.data
+                if summarizer_result and hasattr(summarizer_result, 'output'):
+                    summary_content = summarizer_result.output
                     if isinstance(summary_content, str):
                          # Log the beginning of the summary
                          log_prefix = summary_content[:200].replace("\n", " ") + ("..." if len(summary_content) > 200 else "")
@@ -324,7 +363,7 @@ async def run_deep_research_orchestration(
                          logger.warning(f"Summarizer for {link_str} returned data of unexpected type: {type(summary_content)}")
                          summary_content = None # Treat as failure if not string
                 else:
-                    logger.warning(f"Summarizer for {link_str} did not return a result with data.")
+                    logger.warning(f"Summarizer for {link_str} did not return a result with output.")
 
                 # Now, try to update usage statistics, handling potential TypeError
                 if summarizer_result and hasattr(summarizer_result, 'usage'):
@@ -366,7 +405,7 @@ async def run_deep_research_orchestration(
                     await update_callback.processing_source_summary_success(link_str)
 
             except Exception as e:
-                 # This outer block catches errors during agent.run() itself or accessing .data
+                 # This outer block catches errors during agent.run() itself or accessing .output
                  logger.error(f"Error during summarization processing for {link_str}: {e}", exc_info=True)
                  if update_callback:
                      # Send a warning, but continue processing other sources
@@ -418,7 +457,7 @@ async def run_deep_research_orchestration(
 
             # Iterate through each source and rerank its chunks
             relevant_chunks_from_all_sources: List[Dict[str, Any]] = []
-            api_key = config.together_api_key.get_secret_value()
+            api_key = app_settings.get_rerank_api_key(config.rerank_provider)
             model = config.reranker_model
             rerank_threshold = config.chunk_rerank_relevance_threshold
 
@@ -437,7 +476,9 @@ async def run_deep_research_orchestration(
                         model=model,
                         api_key=api_key,
                         threshold=rerank_threshold, # Use the chunk-specific threshold
-                        logger=logger
+                        logger=logger,
+                        rerank_provider=config.rerank_provider,
+                        provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
                     )
 
                     if reranked_source_chunks:
@@ -635,9 +676,9 @@ async def run_deep_research_orchestration(
             writer_result = await agents_collection.writer.run(writer_user_prompt)
 
             # --- Success Handling (moved inside try block) ---
-            if writer_result and hasattr(writer_result, 'data'):
-                if isinstance(writer_result.data, schemas.WriterOutput):
-                    writer_output = writer_result.data
+            if writer_result and hasattr(writer_result, 'output'):
+                if isinstance(writer_result.output, schemas.WriterOutput):
+                    writer_output = writer_result.output
                     if writer_output.report_content:
                         log_prefix = writer_output.report_content[:200].replace("\n", " ") + ("..." if len(writer_output.report_content) > 200 else "")
                         logger.info(f"Initial Writer generated content: '{log_prefix}'")
@@ -648,12 +689,12 @@ async def run_deep_research_orchestration(
                     break # Exit retry loop on success
                 else:
                     # Treat as critical failure if type is wrong - log and store exception before retry
-                    logger.error(f"Initial Writer returned data of unexpected type: {type(writer_result.data)}. Retrying...")
-                    writer_exception = TypeError(f"Writer agent returned unexpected type: {type(writer_result.data)}")
+                    logger.error(f"Initial Writer returned data of unexpected type: {type(writer_result.output)}. Retrying...")
+                    writer_exception = TypeError(f"Writer agent returned unexpected type: {type(writer_result.output)}")
                     # Fall through to retry delay below
 
             else:
-                 logger.error("Initial Writer did not return a result with data. Retrying...")
+                 logger.error("Initial Writer did not return a result with output. Retrying...")
                  writer_exception = ValueError("Writer agent did not return data.") # Store error
                  # Fall through to retry delay below
 
@@ -743,7 +784,7 @@ async def run_deep_research_orchestration(
                  requested_searches = None
                  continue # Skip to next loop iteration (effectively ending if no more loops)
 
-            serper_cfg = SerperConfig.from_env()
+            serper_cfg = app_settings.build_serper_config()
             refinement_results_map = await execute_search_queries(refinement_tasks, serper_cfg, logger)
             # Increment Serper query usage for refinement searches
             usage_tracker.increment_serper_queries(len(refinement_tasks))
@@ -763,7 +804,7 @@ async def run_deep_research_orchestration(
 
             # Rerank these new results
             if temp_results:
-                 api_key = config.together_api_key.get_secret_value()
+                 api_key = app_settings.get_rerank_api_key(config.rerank_provider)
                  model = config.reranker_model
                  # Combine user query and refinement topic? For now, use user query.
                  rerank_query = user_query # requested_searches[0].query if requested_searches else user_query
@@ -772,7 +813,9 @@ async def run_deep_research_orchestration(
                      search_results=temp_results,
                      model=model, api_key=api_key,
                      threshold=config.rerank_relevance_threshold,
-                     logger=logger
+                     logger=logger,
+                     rerank_provider=config.rerank_provider,
+                     provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
                  )
             else:
                  reranked_refinement_search_results = []
@@ -844,7 +887,7 @@ async def run_deep_research_orchestration(
 
                     # Rerank chunks for each source URL found in this refinement batch
                     reranked_refinement_chunks_all: List[Dict[str, Any]] = []
-                    api_key = config.together_api_key.get_secret_value()
+                    api_key = app_settings.get_rerank_api_key(config.rerank_provider)
                     model = config.reranker_model
                     for source_url_str, source_chunks in refinement_grouped_chunk_dicts.items():
                          if not source_chunks: continue
@@ -855,7 +898,9 @@ async def run_deep_research_orchestration(
                                 chunk_dicts=source_chunks,
                                 model=model, api_key=api_key,
                                 threshold=config.chunk_rerank_relevance_threshold,
-                                logger=logger
+                                logger=logger,
+                                rerank_provider=config.rerank_provider,
+                                provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
                             )
                             if reranked_src_chunks:
                                  reranked_refinement_chunks_all.extend(reranked_src_chunks)
@@ -937,20 +982,20 @@ async def run_deep_research_orchestration(
             
             # Attempt to access and log the refiner output first
             refiner_output: Optional[schemas.WriterOutput] = None
-            if refiner_result and hasattr(refiner_result, 'data'):
-                if isinstance(refiner_result.data, schemas.WriterOutput):
-                    refiner_output = refiner_result.data
+            if refiner_result and hasattr(refiner_result, 'output'):
+                if isinstance(refiner_result.output, schemas.WriterOutput):
+                    refiner_output = refiner_result.output
                     if refiner_output.report_content:
                         log_prefix = refiner_output.report_content[:200].replace("\n", " ") + ("..." if len(refiner_output.report_content) > 200 else "")
                         logger.info(f"Refiner (Loop {refinement_loop_count}) generated content: '{log_prefix}'")
                     else:
                          logger.warning(f"Refiner (Loop {refinement_loop_count}) returned output object but report_content is empty.")
                 else:
-                    logger.error(f"Refiner (Loop {refinement_loop_count}) returned data of unexpected type: {type(refiner_result.data)}")
+                    logger.error(f"Refiner (Loop {refinement_loop_count}) returned data of unexpected type: {type(refiner_result.output)}")
                     # Treat as critical failure for this loop if type is wrong
-                    raise TypeError(f"Refiner agent returned unexpected type: {type(refiner_result.data)}")
+                    raise TypeError(f"Refiner agent returned unexpected type: {type(refiner_result.output)}")
             else:
-                 logger.error(f"Refiner (Loop {refinement_loop_count}) did not return a result with data.")
+                 logger.error(f"Refiner (Loop {refinement_loop_count}) did not return a result with output.")
                  # Treat as critical failure for this loop if no data
                  raise ValueError("Refiner agent did not return data.")
 

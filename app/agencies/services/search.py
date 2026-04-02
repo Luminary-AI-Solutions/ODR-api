@@ -79,7 +79,7 @@ async def execute_batch_serper_search(
         raise ValueError("Search tasks list cannot be empty")
 
     # Load config from env if not provided, raises ConfigurationError if key missing
-    cfg = config or SerperConfig.from_env()
+    cfg = config or SerperConfig()
 
     parsed_results_map: Dict[str, List[SearchResult]] = {task.query: [] for task in search_tasks}
 
@@ -151,7 +151,7 @@ async def execute_batch_serper_search(
 async def _test_async():
     logging.basicConfig(level=logging.DEBUG)
     try:
-        cfg = SerperConfig.from_env()
+        cfg = SerperConfig()
         tasks = [
             {"query": "latest AI research trends", "endpoint": "/search", "num_results": 3},
             {"query": "fastapi websocket tutorial", "endpoint": "/search"},

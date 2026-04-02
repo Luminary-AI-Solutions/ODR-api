@@ -1,12 +1,37 @@
-.git
-.vscode
+.git/
+.vscode/
+.venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+
+# Environment and secrets
 .env*
-secrets/
+ODR-api.env
 odr-key.json
+secrets/
 *.pem
-venv/
-.venv/
-research_reports/
+
+# Dev/test scripts and client utilities
+scripts/
+clients/
+tests/
+test_emailfinder.py
+testoutput.json
+
+# Documentation
+docs/
+*.md
+OATS.md
+firestore_schema.md
 websocket_guide.md
+
+# Generated output
+research_reports/
+downloaded_pdfs/
+
+# Build tooling (not needed at runtime)
+pyproject.toml
+uv.lock
+requirements.txt

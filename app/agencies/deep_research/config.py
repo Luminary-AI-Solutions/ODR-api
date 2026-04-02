@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, Field, ValidationError, model_validator
-from typing import Dict, Any
+from pydantic import Field, ValidationError, AliasChoices
+from typing import Dict, Any, Literal, Optional
 
 class ChunkSettings(BaseSettings):
     chunk_size: int = 2048
@@ -10,8 +10,11 @@ class ChunkSettings(BaseSettings):
 class DeepResearchConfig(BaseSettings):
     """Configuration specific to the Deep Research Agency."""
     
-    # Sensitive key, loaded from env var DEEP_RESEARCH_TOGETHER_API_KEY
-    together_api_key: SecretStr
+    # Reranking provider and role-specific models stay agency-local.
+    rerank_provider: Literal["cohere", "together"] = Field(
+        default="cohere",
+        description="Which rerank API to use (see DEEP_RESEARCH_RERANK_PROVIDER).",
+    )
 
     # --- LLM Model IDs --- 
     # Loadable from env vars like DEEP_RESEARCH_PLANNER_MODEL_ID
@@ -21,8 +24,11 @@ class DeepResearchConfig(BaseSettings):
     refiner_model_id: str = Field(default="google/gemini-2.0-flash-001")
     
     # --- Reranker --- 
-    # Reranker model, loaded from env var DEEP_RESEARCH_RERANKER_MODEL, with default
-    reranker_model: str = Field(default="Salesforce/Llama-Rank-V1")
+    # Cohere: e.g. rerank-english-v3.0; Together: e.g. Salesforce/Llama-Rank-v1 (if available)
+    reranker_model: str = Field(
+        default="rerank-english-v3.0",
+        validation_alias=AliasChoices("DEEP_RESEARCH_RERANKER_MODEL", "RERANKER_MODEL"),
+    )
     
     # Relevance threshold for initial search result reranking
     rerank_relevance_threshold: float = Field(default=0.25, description="Threshold for initial search result reranking.")
@@ -39,20 +45,12 @@ class DeepResearchConfig(BaseSettings):
     # Option 1: Nested Model (cleaner)
     default_chunk_settings: ChunkSettings = Field(default_factory=ChunkSettings)
 
-    # Model configuration for BaseSettings
+    # Model configuration for BaseSettings (DEEP_RESEARCH_* from os.environ; see app.core.config _load_repo_env_files)
     model_config = SettingsConfigDict(
-        env_prefix='DEEP_RESEARCH_', # Prefix for environment variables
-        env_file='.env',             # Optionally load from .env file
-        env_file_encoding='utf-8',
-        extra='ignore'               # Ignore extra fields from env/file
+        env_prefix="DEEP_RESEARCH_",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
-
-    @model_validator(mode='after')
-    def check_api_key_present(cls, self):
-        # Access field directly using attribute access on the instance ('self')
-        if not self.together_api_key:
-            raise ValueError("DEEP_RESEARCH_TOGETHER_API_KEY must be set in the environment or .env file")
-        return self
 
 # Example usage (for testing if run directly)
 if __name__ == "__main__":
@@ -63,15 +61,12 @@ if __name__ == "__main__":
         print(f"  Summarizer Model: {config.summarizer_model_id}")
         print(f"  Writer Model: {config.writer_model_id}")
         print(f"  Refiner Model: {config.refiner_model_id}")
+        print(f"  Rerank provider: {config.rerank_provider}")
         print(f"  Reranker Model: {config.reranker_model}")
         print(f"  Max Loops: {config.max_refinement_loops}")
         print(f"  Threshold: {config.rerank_relevance_threshold}")
         print(f"  Chunk Threshold: {config.chunk_rerank_relevance_threshold}")
         print(f"  Top N Chunks per Source: {config.top_n_chunks_per_source}")
         print(f"  Chunk Settings: {config.default_chunk_settings}")
-        # Avoid printing secret directly
-        print(f"  API Key Loaded: {bool(config.together_api_key.get_secret_value())}")
     except ValidationError as e:
         print(f"Error loading DeepResearchConfig: {e}")
-    except ValueError as e: # Catch the ValueError from the validator
-        print(f"Configuration Error: {e}") 

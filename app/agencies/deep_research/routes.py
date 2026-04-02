@@ -13,7 +13,7 @@ from firebase_admin import firestore
 from pydantic import ValidationError
 
 # --- Core Imports ---
-from app.core.config import AppSettings, ApiKeys
+from app.core.config import AppSettings
 # Adapt schema imports - need ResearchRequest from core, ResearchResponse from agency schema
 # Import ResearchRequest from the agency schema file where it's defined
 from .schemas import ResearchRequest as CoreResearchRequest
@@ -26,10 +26,7 @@ from app.core.exceptions import (
 from .orchestrator import run_deep_research_orchestration_wrapper # Import the wrapper
 from .agents import (
     AgencyAgents, # Import the container
-    create_planner_agent, # Import agent creation functions
-    create_summarizer_agent,
-    create_writer_agent,
-    create_refiner_agent
+    get_agency_agents as build_agency_agents,
 )
 from .config import DeepResearchConfig # Import the agency-specific config
 from .callbacks import WebSocketUpdateHandler # Import the handler
@@ -40,7 +37,7 @@ from .callbacks import WebSocketUpdateHandler # Import the handler
 # from app.main import get_settings, get_api_keys # No longer import from main
 from app.core.state import active_tasks # Import ONLY active_tasks from the new state module
 # Import dependencies from the new core dependencies file
-from app.core.dependencies import get_settings, get_api_keys, get_firestore_db # Add get_firestore_db
+from app.core.dependencies import get_settings, get_firestore_db # Add get_firestore_db
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -61,23 +58,10 @@ def get_deep_research_config() -> DeepResearchConfig:
 
 def get_agency_agents(
     settings: AppSettings = Depends(get_settings),
-    api_keys: ApiKeys = Depends(get_api_keys),
     agency_config: DeepResearchConfig = Depends(get_deep_research_config)
 ) -> AgencyAgents:
     try:
-        # 1. Instantiate individual agents using their creation functions
-        planner = create_planner_agent(config=agency_config)
-        summarizer = create_summarizer_agent(config=agency_config)
-        writer = create_writer_agent(config=agency_config)
-        refiner = create_refiner_agent(config=agency_config)
-
-        # 2. Create and return the AgencyAgents container with the instances
-        return AgencyAgents(
-            planner=planner,
-            summarizer=summarizer,
-            writer=writer,
-            refiner=refiner
-        )
+        return build_agency_agents(config=agency_config, settings=settings)
     except Exception as e:
         logger.error(f"Failed to initialize AgencyAgents: {e}", exc_info=True)
         raise ConfigurationError(f"Could not initialize agency agents: {e}")

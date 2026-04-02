@@ -56,13 +56,20 @@ class CpeWebSocketUpdateHandler:
     async def planning_start(self):
         await self._send_update("PLANNING", "START", "Generating search plan...")
 
-    async def planning_end(self, search_task_count: int): # Simplified details
+    async def planning_end(self, plan_details: Dict[str, Any]):
+        """plan_details should match Deep Research: {\"plan\": {\"writing_plan\", \"search_task_count\", \"search_queries\"}}."""
+        count = 0
+        try:
+            plan = (plan_details or {}).get("plan") or {}
+            count = int(plan.get("search_task_count") or 0)
+        except (TypeError, ValueError):
+            count = 0
         await self._send_update(
-            "PLANNING", 
-            "END", 
-            f"Search plan generated with {search_task_count} tasks.", 
-            {"search_task_count": search_task_count}
-            )
+            "PLANNING",
+            "END",
+            f"Search plan generated with {count} tasks.",
+            plan_details,
+        )
 
     async def planning_error(self, error: Exception):
         await self._send_update(

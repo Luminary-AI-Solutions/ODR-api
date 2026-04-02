@@ -10,7 +10,7 @@ import logging
 import os # Needed for path operations with downloaded files
 # Removed unused: import re
 # Removed unused dataclass: from dataclasses import dataclass
-from typing import Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, urljoin
 from pydantic import BaseModel, Field, ConfigDict, HttpUrl # Add necessary Pydantic imports
 import httpx # <-- Import httpx for exception handling
@@ -26,8 +26,6 @@ from crawl4ai import (
     BrowserConfig,
     CrawlerRunConfig,
     CacheMode,
-    MarkdownGenerationResult,
-    CrawlResult # Import CrawlResult for type hinting
 )
 
 # Import configuration and schemas using absolute paths
@@ -46,6 +44,26 @@ from .scraper_utils import wikipedia
 logger = logging.getLogger(__name__)
 
 # Removed load_dotenv() call
+
+
+def _primary_text_from_crawl(result: Any) -> tuple[Optional[str], str]:
+    """Extract text and a coarse source label from Crawl4AI CrawlResult or CrawlResultContainer."""
+    if result is None:
+        return None, "crawl4ai_failed_or_skipped"
+    ext = getattr(result, "extracted_content", None)
+    if ext:
+        return ext, "crawl4ai_extracted_content"
+    legacy = getattr(result, "content", None)
+    if legacy:
+        return legacy, "crawl4ai_content"
+    md = getattr(result, "markdown", None)
+    if md is not None:
+        return str(md), "crawl4ai_markdown"
+    html = getattr(result, "html", None)
+    if html:
+        return html, "crawl4ai_html"
+    return None, "crawl4ai_empty_result"
+
 
 # --- ExtractionResult Schema Definition --- #
 class ExtractionResult(BaseModel):
@@ -269,8 +287,14 @@ class WebScraper:
                 crawler_id = id(crawler) if crawler else None
                 logger.debug(f"scrape() called for {url_str}. Passed crawler object ID: {crawler_id}. Is crawler None? {crawler is None}")
                 try:
-                    run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
-                    crawl4ai_result: Optional[CrawlResult] = None
+                    # Disable Crawl4AI console rendering here; its rich glyph output
+                    # can crash under the default Windows code page before content is returned.
+                    run_config = CrawlerRunConfig(
+                        cache_mode=CacheMode.BYPASS,
+                        verbose=False,
+                        log_console=False,
+                    )
+                    crawl4ai_result: Optional[Any] = None  # CrawlResult or CrawlResultContainer from Crawl4AI
 
                     async def run_crawl_logic(crawler_instance: AsyncWebCrawler):
                         nonlocal crawl4ai_result
@@ -328,20 +352,17 @@ class WebScraper:
                              content = None
                              extraction_source = "pdf_download_unexpected_error"
 
-                    elif crawl4ai_result and hasattr(crawl4ai_result, 'content') and crawl4ai_result.content:
-                        content = crawl4ai_result.content
-                        extraction_source = crawl4ai_result.name if hasattr(crawl4ai_result, 'name') else "crawl4ai_content"
-                    elif crawl4ai_result and hasattr(crawl4ai_result, 'markdown') and crawl4ai_result.markdown:
-                        content = crawl4ai_result.markdown
-                        extraction_source = crawl4ai_result.name if hasattr(crawl4ai_result, 'name') else "crawl4ai_markdown"
                     else:
+                        text, src = _primary_text_from_crawl(crawl4ai_result)
+                        extraction_source = src
+                        if text:
+                            content = text
+
+                    if content is None and downloaded_pdf_path is None:
                         if crawl4ai_result is None:
-                             logger.warning(f"Crawl4AI processing failed or was skipped for {url_str}.")
-                             extraction_source = "crawl4ai_failed_or_skipped"
+                            logger.warning(f"Crawl4AI processing failed or was skipped for {url_str}.")
                         else:
-                             logger.warning(f"Crawl4AI processing for {url_str} yielded no usable content.")
-                             extraction_source = "crawl4ai_empty_result"
-                        content = None
+                            logger.warning(f"Crawl4AI processing for {url_str} yielded no usable content.")
 
                 except Exception as e:
                     logger.error(f"Unexpected error during general crawling setup for {url_str}: {e}", exc_info=True)

@@ -1,11 +1,10 @@
 import asyncio
 from typing import Dict, Any, Optional
 import logging
-import os
-import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from firebase_admin.firestore import Client # Correct type hint
+from .config import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ active_tasks: Dict[str, asyncio.Task] = {}
 
 # --- Firebase Initialization Function --- #
 # Renamed to avoid conflict and make it synchronous
-def initialize_firebase_sync() -> Optional[Client]:
+def initialize_firebase_sync(settings: Optional[AppSettings] = None) -> Optional[Client]:
     """Initializes the Firebase Admin SDK synchronously and returns the client."""
     global db
     # Check if already initialized
@@ -27,18 +26,22 @@ def initialize_firebase_sync() -> Optional[Client]:
         return db
     
     try:
-        firebase_cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_JSON")
+        app_settings = settings or AppSettings()
+        firebase_cred_path = app_settings.firebase_service_account_key_json
         if not firebase_cred_path:
             logger.warning("FIREBASE_SERVICE_ACCOUNT_KEY_JSON env var not set. Firestore integration disabled.")
             return None
 
-        if not os.path.exists(firebase_cred_path):
+        cred_path = str(firebase_cred_path)
+        from os import path
+
+        if not path.exists(cred_path):
             logger.warning(f"Firebase credentials file not found at: {firebase_cred_path}. Firestore integration disabled.")
             return None
 
         # Avoid double initialization if called multiple times before db is set
         if not firebase_admin._apps:
-            cred = credentials.Certificate(firebase_cred_path)
+            cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred)
             logger.info("Firebase Admin SDK initialized successfully.")
         else:

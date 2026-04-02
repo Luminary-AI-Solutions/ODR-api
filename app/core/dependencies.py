@@ -1,30 +1,14 @@
 import logging
 from .config import AppSettings, ApiKeys
-from .exceptions import ConfigurationError
-from fastapi import Depends, HTTPException
 from typing import Optional
-from .state import db, active_tasks, initialize_firebase_sync
+from .state import initialize_firebase_sync
 from firebase_admin.firestore import Client
 
 logger = logging.getLogger(__name__)
 
-# --- Core Config Instances ---
-# Load settings and keys once during import
-# This assumes AppSettings and ApiKeys can be instantiated from environment/defaults
-try:
-    app_settings = AppSettings()
-    api_keys = ApiKeys()
-except Exception as e:
-    logger.critical(f"CRITICAL ERROR: Failed to load AppSettings or ApiKeys on import: {e}", exc_info=True)
-    # Set to None so dependency functions raise ConfigurationError
-    app_settings = None
-    api_keys = None
-
-# Cache instances to avoid reloading on every request
 _settings: Optional[AppSettings] = None
 _api_keys: Optional[ApiKeys] = None
 
-# --- Dependency Injection Functions ---
 def get_settings() -> AppSettings:
     """Dependency function to get application settings."""
     global _settings
@@ -36,7 +20,7 @@ def get_api_keys() -> ApiKeys:
     """Dependency function to get API keys."""
     global _api_keys
     if _api_keys is None:
-        _api_keys = ApiKeys()
+        _api_keys = ApiKeys.from_settings(get_settings())
     return _api_keys
 
 def get_firestore_db() -> Optional[Client]:
@@ -45,6 +29,6 @@ def get_firestore_db() -> Optional[Client]:
     Initializes Firebase if necessary.
     Returns None if initialization fails, allowing optional usage.
     """
-    firestore_client = initialize_firebase_sync()
+    firestore_client = initialize_firebase_sync(get_settings())
     # No longer raises HTTPException. Routes/Orchestrators must handle None.
     return firestore_client 

@@ -1,5 +1,4 @@
 import logging
-import os
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, RunContext, ModelRetry
 from pydantic_ai.models.openai import OpenAIModel
@@ -9,6 +8,7 @@ import re
 
 from . import schemas
 from .config import DeepResearchConfig
+from app.core.config import AppSettings
 
 # Add type checking import for SourceSummary
 if TYPE_CHECKING:
@@ -32,8 +32,8 @@ For each search task, consider:
 
 Each search task should specify:
 - `query`: Precise, information-rich search string optimized for the chosen endpoint
-- `endpoint`: Most appropriate Serper endpoint (/search, /scholar, or /news)
-- `num_results`: Number of results (10-30 depending on topic breadth)
+- `endpoint`: Must be **exactly one** of these three strings (no pipes, no alternatives in one field): `/search`, `/scholar`, or `/news`
+- `num_results`: Integer from **5 to 20** (hard maximum 20)
 - `reasoning`: Justification for this specific query and how it addresses a distinct aspect of the user's request
 
 Available Serper endpoints and when to use them:
@@ -58,8 +58,8 @@ Output *only* a single JSON object adhering to the following schema. Do not incl
   "search_tasks": [
     {{
       "query": "Specific query string for Serper",
-      "endpoint": "/search | /scholar | /news",
-      "num_results": <integer between 5-15>,
+      "endpoint": "/search",
+      "num_results": 10,
       "reasoning": "Why this query addresses a specific aspect of the user's request and why this endpoint is best for this particular sub-topic"
     }}
     // ... (3 to 7 tasks depending on topic complexity)
@@ -273,81 +273,68 @@ def format_summaries_for_prompt(source_materials: list[Dict[str, Any]]) -> str:
     return formatted_string.strip()
 
 
-# --- Define OpenRouter Models --- 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    logger.warning("OPENROUTER_API_KEY environment variable not set. Agent initialization might fail.")
-    # You might want to raise an error here depending on application requirements
-
-def create_llm_model(model_id: str) -> OpenAIModel:
+def create_llm_model(model_id: str, settings: AppSettings) -> OpenAIModel:
     """Helper function to create an OpenAI-compatible model instance for OpenRouter."""
-    if not OPENROUTER_API_KEY:
-        # Raise error earlier if key is missing, as provider needs it.
-        raise ValueError("OPENROUTER_API_KEY environment variable not set.")
-    
     provider = OpenAIProvider(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1"
+        api_key=settings.get_openrouter_api_key(),
+        base_url=str(settings.openrouter_api_base),
     )
-    # Model ID format might need adjustment depending on OpenRouter/Provider expectations
-    # Using the provided model_id directly as it seems like the intended format.
-    # Pass model_id as the first positional argument
     return OpenAIModel(model_id, provider=provider)
 
 # --- Agent Definitions --- 
 
-def create_planner_agent(config: DeepResearchConfig) -> Agent:
+def create_planner_agent(config: DeepResearchConfig, settings: AppSettings) -> Agent:
     """Creates the Planner Agent instance."""
     model_id = config.planner_model_id # Get model_id from config
     logger.debug(f"Creating Planner Agent with model: {model_id}") # Log the id directly
-    planner_model = create_llm_model(model_id)
+    planner_model = create_llm_model(model_id, settings)
     return Agent[
         schemas.PlannerOutput
     ](
         model=planner_model,
         system_prompt=_PLANNER_SYSTEM_PROMPT,
-        result_type=schemas.PlannerOutput,
-        retries=3
+        output_type=schemas.PlannerOutput,
+        retries=5
     )
 
-def create_summarizer_agent(config: DeepResearchConfig) -> Agent:
+def create_summarizer_agent(config: DeepResearchConfig, settings: AppSettings) -> Agent:
     """Creates the Summarizer Agent instance."""
     model_id = config.summarizer_model_id # Get model_id from config
     logger.debug(f"Creating Summarizer Agent with model: {model_id}") # Log the id directly
-    summarizer_model = create_llm_model(model_id)
+    summarizer_model = create_llm_model(model_id, settings)
     return Agent[str](
         model=summarizer_model,
         system_prompt=_SUMMARIZER_SYSTEM_PROMPT,
-        result_type=str,
+        output_type=str,
         retries=3
     )
 
-def create_writer_agent(config: DeepResearchConfig) -> Agent:
+def create_writer_agent(config: DeepResearchConfig, settings: AppSettings) -> Agent:
     """Creates the Writer Agent instance."""
     model_id = config.writer_model_id # Get model_id from config
     logger.debug(f"Creating Writer Agent with model: {model_id}") # Log the id directly
-    writer_model = create_llm_model(model_id)
+    writer_model = create_llm_model(model_id, settings)
     return Agent[schemas.WriterOutput](
         model=writer_model,
         system_prompt=_WRITER_SYSTEM_PROMPT_BASE,
         deps_type=None,
-        result_type=schemas.WriterOutput,
+        output_type=schemas.WriterOutput,
         retries=3
     )
 
-def create_refiner_agent(config: DeepResearchConfig) -> Agent:
+def create_refiner_agent(config: DeepResearchConfig, settings: AppSettings) -> Agent:
     """
     Creates the Refiner Agent instance.
     Handles revisions and refinement. Signals need for external actions via JSON structure.
     """
     model_id = config.refiner_model_id # Get model_id from config
     logger.debug(f"Creating Refiner Agent with model: {model_id}") # Log the id directly
-    refiner_model = create_llm_model(model_id)
+    refiner_model = create_llm_model(model_id, settings)
     return Agent[schemas.WriterOutput](
         model=refiner_model,
         system_prompt=_REFINEMENT_SYSTEM_PROMPT,
         deps_type=None,
-        result_type=schemas.WriterOutput,
+        output_type=schemas.WriterOutput,
         retries=3
     )
 
@@ -362,7 +349,7 @@ class AgencyAgents(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 # --- Agent Initialization Function ---
-def get_agency_agents(config: DeepResearchConfig) -> AgencyAgents:
+def get_agency_agents(config: DeepResearchConfig, settings: AppSettings) -> AgencyAgents:
     """
     Initializes and returns all PydanticAI Agent instances for the agency,
     including applying result validators.
@@ -370,15 +357,15 @@ def get_agency_agents(config: DeepResearchConfig) -> AgencyAgents:
     Returns:
         An AgencyAgents object containing the initialized PydanticAI agents.
     """
-    planner = create_planner_agent(config=config)
-    summarizer = create_summarizer_agent(config=config)
-    writer = create_writer_agent(config=config)
-    refiner = create_refiner_agent(config=config)
+    planner = create_planner_agent(config=config, settings=settings)
+    summarizer = create_summarizer_agent(config=config, settings=settings)
+    writer = create_writer_agent(config=config, settings=settings)
+    refiner = create_refiner_agent(config=config, settings=settings)
 
     # --- Apply Result Validator using Decorator Syntax ---
     # Define the validator function here after agents are created
-    @writer.result_validator
-    @refiner.result_validator
+    @writer.output_validator
+    @refiner.output_validator
     async def validate_citations_present(ctx: RunContext[None], result: schemas.WriterOutput) -> schemas.WriterOutput:
         """Validates that the report content includes [[CITATION:source_ref_num]] markers."""
         citation_pattern = r"\[\[CITATION:\d+(,\d+)*\]\]"

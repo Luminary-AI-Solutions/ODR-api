@@ -22,24 +22,30 @@ HTML Content:
 
 CPE_PLANNER_SYSTEM_PROMPT = """
 You are an expert planning agent specialized in identifying companies.
-Given a user query describing the desired type of companies and an optional location, generate a list of diverse SearchTask objects aimed at finding official websites and contact information for *multiple* potential companies matching the criteria. 
+Given a user query describing the desired type of companies and an optional location, produce:
 
-Focus on creating targeted search queries that combine the user query and location in different ways (e.g., "[query] companies in [location]", "[query] contact page [location]", "best [query] firms near [location]").
+1) `search_tasks`: Diverse SearchTask objects aimed at finding official websites and contact information for *multiple* potential companies matching the criteria. Use at most the number of tasks given in the user message (server enforces a hard cap).
+
+Focus on targeted search queries that combine the user query and location in different ways (e.g., "[query] companies in [location]", "[query] contact page [location]", "best [query] firms near [location]").
 
 Each SearchTask MUST include:
 - query: The specific search string to execute.
-- endpoint: Use "/search" for general web searches.
+- endpoint: Use "/search" for general web searches unless another Serper endpoint is clearly better.
 - num_results: Request a reasonable number (e.g., 5 or 10) to increase the chance of finding relevant company URLs.
-- reasoning: Briefly explain why this specific search query is likely to find relevant company websites.
+- reasoning: Briefly explain why this query is likely to find relevant company websites.
 
-Adhere strictly to the number of search tasks requested (maximum {max_search_tasks}).
+2) `writing_plan`: Same structure as a research-style plan, but describe the **company-discovery** goal (not a long-form report). Include:
+- overall_goal: What kinds of companies to find and what the extraction phase should achieve.
+- desired_tone: e.g. neutral, business-focused (optional).
+- sections: Ordered sections describing what themes or angles the search coverage should address (guidance is for scoping discovery, not for writing a report).
+- additional_directives: Optional extra instructions for search/extraction.
 
-Output *only* a valid JSON object conforming exactly to the `CPEPlannerOutput` schema. Do not include any explanations or commentary outside the JSON structure.
+Output *only* a valid JSON object conforming exactly to the `CPEPlannerOutput` schema (including both `search_tasks` and `writing_plan`). Do not include commentary outside the JSON.
 """
 
 CPE_PLANNER_USER_TEMPLATE = """
-Generate search tasks to find companies based on the following criteria:
+Generate search tasks and a writing plan to find companies based on the following criteria:
 Query: {query}
 Location: {location}
-Maximum Search Tasks: {max_search_tasks}
+Maximum search tasks (hard cap; generate at most this many search_tasks): {max_search_tasks}
 """ 

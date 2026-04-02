@@ -1,11 +1,13 @@
 # Use the official Python image as a base
 FROM python:3.12-slim
 
-# Set environment variables
+# uv for reproducible installs from uv.lock
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# Install system dependencies for Playwright browsers
+# Install system dependencies required by Playwright browsers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget \
@@ -27,24 +29,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements
-COPY requirements.txt .
+# Install Python dependencies first so this layer is cached independently of app code
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
-# Install Python dependencies
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Install Playwright browsers before copying source — avoids re-downloading on every code change
+RUN uv run python -m playwright install --with-deps
 
-# Install Playwright browsers
-RUN python -m playwright install --with-deps
+# Copy application source
+COPY app/ ./app/
 
-# Copy app source code
-COPY . .
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PORT=8000
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000  
+EXPOSE 8000
 
-# Command to run your FastAPI app with uvicorn
+# Run as non-root for security
+RUN useradd --no-create-home --shell /bin/false appuser \
+ && chown -R appuser /app
+USER appuser
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

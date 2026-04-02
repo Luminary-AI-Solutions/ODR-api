@@ -10,10 +10,9 @@ class CPEConfig(BaseSettings):
 
     # Use model_config for Pydantic V2 settings
     model_config = SettingsConfigDict(
-        env_prefix = "CPE_",
-        env_file = ".env",
-        env_file_encoding='utf-8',
-        extra='ignore' # Ignore extra env vars
+        env_prefix="CPE_",
+        env_file_encoding="utf-8",
+        extra="ignore",
     ) 
 
     @model_validator(mode='after')

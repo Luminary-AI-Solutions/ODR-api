@@ -13,6 +13,7 @@ from crawl4ai import (
     CrawlResult,
     CacheMode
 )
+from crawl4ai.async_logger import AsyncLogger
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 # Use LXMLWebScrapingStrategy explicitly if default doesn't guarantee HTML in result.content or result.html
 # from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
@@ -75,11 +76,12 @@ async def find_emails_deep(
             # scraping_strategy=LXMLWebScrapingStrategy(), # Uncomment if default doesn't work
             cache_mode=CacheMode.BYPASS, # Bypass cache entirely
             stream=True,
-            verbose=True # Set to True for detailed Crawl4AI logs
+            verbose=False,
+            log_console=False,
         )
 
         # Initialize and run the crawler
-        async with AsyncWebCrawler() as crawler:
+        async with AsyncWebCrawler(logger=AsyncLogger(verbose=False)) as crawler:
             # arun returns an async iterator when stream=True
             async for result in await crawler.arun(start_url, config=config):
                 crawled_count += 1

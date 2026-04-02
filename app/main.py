@@ -10,7 +10,7 @@ import os
 from contextlib import asynccontextmanager # Import asynccontextmanager
 
 # Import configuration
-from .core.config import AppSettings, ApiKeys
+from .core.config import AppSettings
 # Import custom exceptions (Keep all as they are used by handlers)
 from .core.exceptions import (
     DeepResearchError, ConfigurationError, ValidationError, LLMError,
@@ -64,6 +64,27 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Actions to perform on startup
     logger.info("Application startup: Initializing services...")
+    if os.getenv("OPENROUTER_DEBUG", "").strip().lower() in ("1", "true", "yes"):
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("httpcore").setLevel(logging.DEBUG)
+        logger.info("OPENROUTER_DEBUG enabled: httpx/httpcore logging set to DEBUG.")
+    try:
+        from .core.dependencies import get_settings
+
+        _s = get_settings()
+        _has_or = bool(_s.openrouter_api_key and _s.openrouter_api_key.get_secret_value())
+        logger.info(
+            "OpenRouter: base_url=%s api_key_loaded=%s",
+            _s.openrouter_api_base,
+            _has_or,
+        )
+        if not _has_or:
+            logger.warning(
+                "OPENROUTER_API_KEY is not set after loading env files. "
+                "LLM calls will fail until it is set (ODR-api.env or environment)."
+            )
+    except Exception as ex:
+        logger.warning("Could not log OpenRouter startup diagnostics: %s", ex)
     # initialize_firebase() # REMOVED: Initialization now handled by dependency
     logger.info("Application startup: Service initialization complete.")
     yield

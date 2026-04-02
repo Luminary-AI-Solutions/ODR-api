@@ -98,7 +98,7 @@ async def _test_service():
     #     print("Skipping test: SERPER_API_KEY not set.")
     #     return
     try:
-        cfg = SerperConfig.from_env() # Test creating config here
+        cfg = SerperConfig()  # Test creating config here
         print("\n--- Testing Batch Search ---")
         tasks = [
             SearchTask(query="Python decorators", endpoint="/search", num_results=2),

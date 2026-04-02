@@ -4,12 +4,13 @@ import json
 import argparse
 import sys
 from datetime import datetime
+from typing import Optional
 
-# Default server address
-DEFAULT_WS_URL = "ws://localhost:8000/deep_research/ws/research"
+# Default server address for CPE
+DEFAULT_WS_URL = "ws://localhost:8000/cpe/ws/cpe" # Match server route including prefix
 
 def print_update(data: dict):
-    """Formats and prints the received status update."""
+    """Formats and prints the received CPE status update."""
     now = datetime.now().strftime("%H:%M:%S")
     step = data.get('step', 'N/A')
     status = data.get('status', 'N/A')
@@ -22,17 +23,17 @@ def print_update(data: dict):
         # Print simple key-value pairs nicely
         detail_items = []
 
-        # Extract final report and usage based on new step/status structure
-        final_report = details.get('final_report') if step == 'FINALIZING' and status == 'END' else None
+        # Extract final results and usage based on CPE structure
+        # Final profiles are not sent in the details of COMPLETE, they are saved in Firestore.
+        # We primarily look for the count and usage stats.
+        profiles_extracted_count = details.get('profiles_extracted') if step == 'COMPLETE' and status == 'END' else None
         usage_stats = details.get('usage') if step == 'COMPLETE' and status == 'END' else None
 
         # Process other details (excluding the ones handled above)
-        other_details = {k: v for k, v in details.items() if k not in ['final_report', 'usage']}
+        other_details = {k: v for k, v in details.items() if k not in ['profiles_extracted', 'usage']}
         if other_details:
             try:
-                # Try pretty printing non-result details JSON
                 details_str = json.dumps(other_details, indent=2)
-                # Indent the details block
                 indented_details = "\n      " + details_str.replace("\n", "\n      ")
                 detail_items.append(f"Details:{indented_details}")
             except Exception:
@@ -43,47 +44,53 @@ def print_update(data: dict):
         else:
              print() # Just a newline if only message was present
 
-        # Print final report and usage stats separately for clarity
+        # Print final count and usage stats separately
+        if profiles_extracted_count is not None:
+            print(f"\n--- Profiles Extracted: {profiles_extracted_count} ---")
+
         if usage_stats:
              print("\n--- Usage Statistics ---")
              try:
-                 # Pretty print usage stats JSON
                  usage_str = json.dumps(usage_stats, indent=2)
                  print(usage_str)
              except Exception:
                  print(usage_stats) # Fallback
              print("------------------------")
 
-        if final_report:
-            print("\n------ Final Report ------")
-            print(final_report)
-            print("------------------------")
-
     else:
         print() # Just add a newline if no details
 
 
-async def run_client(uri: str, query: str):
-    """Connects to the WebSocket server, sends query, and prints updates."""
+async def run_client(uri: str, query: str, location: Optional[str], max_tasks: Optional[int]):
+    """Connects to the CPE WebSocket server, sends query, and prints updates."""
     print(f"Connecting to {uri}...")
     try:
-        async with websockets.connect(uri) as websocket:
+        # Include an Origin header so the server's CORS middleware allows the WebSocket upgrade
+        async with websockets.connect(uri, origin="http://localhost:8000") as websocket:
             print(f"Connected! Sending query: '{query}'")
+            if location: print(f"           Location: '{location}'")
+            if max_tasks is not None: print(f"           Max Tasks: {max_tasks}")
 
-            # Prepare the request payload (CoreResearchRequest format)
-            request_payload = {"query": query}
+            # Prepare the request payload (CPERequest format)
+            request_payload = {
+                "query": query,
+                # Only include optional fields if they are provided
+                **({"location": location} if location else {}),
+                **({"max_search_tasks": max_tasks} if max_tasks is not None else {}),
+            }
+
             await websocket.send(json.dumps(request_payload))
-            print("Query sent. Waiting for updates...")
+            print("Request sent. Waiting for updates...")
 
             try:
                 async for message in websocket:
                     try:
                         data = json.loads(message)
                         print_update(data)
-                        # Check for final messages to potentially exit cleanly
+                        # Check for final messages
                         step = data.get('step', '').upper()
                         status = data.get('status', '').upper()
-                        if step == 'COMPLETE' or status in ['FATAL', 'HANDLER_ERROR', 'VALIDATION_ERROR']:
+                        if step == 'COMPLETE' or status in ['FATAL', 'HANDLER_ERROR', 'VALIDATION_ERROR', 'JSON_ERROR', 'PROCESSING_ERROR', 'INTERNAL_ERROR']:
                             print("\nReceived final status. Closing connection.")
                             break
                     except json.JSONDecodeError:
@@ -108,21 +115,22 @@ async def run_client(uri: str, query: str):
         sys.exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="WebSocket client for Deep Research API.")
-    parser.add_argument("query", help="The research query to send to the server.")
+    parser = argparse.ArgumentParser(description="WebSocket client for CPE API.")
+    parser.add_argument("query", help="The company/profile query to send.")
+    parser.add_argument("-l", "--location", help="Optional location context for the query.")
+    parser.add_argument("-m", "--max-tasks", type=int, help="Optional max search tasks for the planner.")
     parser.add_argument("-u", "--uri", default=DEFAULT_WS_URL,
                         help=f"WebSocket URI of the server (default: {DEFAULT_WS_URL})")
 
     args = parser.parse_args()
 
-    # Basic validation
     if not args.query:
         print("Error: Query cannot be empty.")
         parser.print_help()
         sys.exit(1)
 
     try:
-        asyncio.run(run_client(args.uri, args.query))
+        asyncio.run(run_client(args.uri, args.query, args.location, args.max_tasks))
     except KeyboardInterrupt:
         print("\nClient interrupted by user. Exiting.")
-        sys.exit(0) 
+        sys.exit(0)
