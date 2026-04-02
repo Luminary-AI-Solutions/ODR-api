@@ -31,7 +31,4 @@ websocket_guide.md
 research_reports/
 downloaded_pdfs/
 
-# Build tooling (not needed at runtime)
-pyproject.toml
-uv.lock
-requirements.txt
+# Note: pyproject.toml and uv.lock must stay in the build context for `uv sync --frozen`.
