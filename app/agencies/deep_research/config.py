@@ -43,11 +43,13 @@ class DeepResearchConfig(BaseSettings):
     rerank_against_subquery: bool = Field(default=True)
     rerank_min_results_per_query: int = Field(default=3, ge=0)
 
-    # Which model scores relevance. "cohere" uses the rerank API above; "jev" uses TypeSafe's Jev decision model
-    # via OpenRouter (0-3 score: unrelated / related / partly answers / directly answers the sub-question).
-    # In the offline chunk-selection eval, Jev picked chunks with 0.76 precision vs Cohere's 0.44 from the same pool.
-    chunk_selector: Literal["cohere", "jev"] = Field(default="cohere")
-    search_selector: Literal["cohere", "jev"] = Field(default="cohere")
+    # Which model scores relevance. "jev" (default) uses TypeSafe's Jev decision model via OpenRouter, with the
+    # OpenRouter key the agents already use (0-3 score: unrelated / related / partly answers / directly answers
+    # the sub-question); "cohere" uses the rerank API above. In the evals Jev matched Cohere on report quality
+    # (RACE 0.488 vs 0.489), picked more relevant chunks offline (0.76 vs 0.44 precision), and ran ~2x faster
+    # with no rate-limit stalls (evals/RESULTS.md).
+    chunk_selector: Literal["cohere", "jev"] = Field(default="jev")
+    search_selector: Literal["cohere", "jev"] = Field(default="jev")
     jev_model: str = Field(default="typesafe/jev-1.13")
     jev_chunk_min_score: float = Field(default=2.0, description="Keep chunks scoring >= this ('partly answers').")
     jev_search_min_score: float = Field(default=1.0, description="Keep search results scoring >= this ('related').")

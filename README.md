@@ -25,7 +25,8 @@
 *   **Structured LLM Interaction:** Leverages Pydantic (`app/core/schemas.py`, `app/agencies/<agency_name>/schemas.py`) to define clear input/output schemas for LLM agents, ensuring reliable and validated data flow.
 *   **Integrated Web Search:** Built-in support for [Serper](https://serper.dev/) (`app/agencies/services/search_services/serper.py`), easily adaptable for other providers.
 *   **Advanced Content Scraping:** Uses [Crawl4AI](https://github.com/extractus/crawl4ai) (`app/agencies/services/scraper.py`) for robust web content extraction, including utilities for handling complex sites and formats like PDFs.
-*   **Content Reranking:** Employs reranking models (Cohere by default, or Together AI) to prioritize the most relevant search results and text chunks for LLM context (`app/agencies/services/ranking.py`, used by `helpers.py`).
+*   **Relevance Selection:** Each search result and text chunk is scored against the planner sub-query that retrieved it, with a per-sub-query floor so no aspect of the task is dropped. Scoring uses TypeSafe's [Jev](https://openrouter.ai/docs/guides/community/jev) decision model via OpenRouter by default (`app/agencies/services/jev.py`), or a Cohere/Together reranker (`app/agencies/services/ranking.py`); see `DEEP_RESEARCH_SEARCH_SELECTOR` / `DEEP_RESEARCH_CHUNK_SELECTOR`.
+*   **Evals:** Search quality (UMBRELA) and report quality (DeepResearch Bench RACE + FACT) on 20 benchmark tasks, judged by Claude; see `evals/README.md` and `evals/RESULTS.md`.
 *   **Asynchronous Streaming:** Provides real-time progress updates via WebSockets (see `websocket_guide.md`).
 *   **Configurable:** Shared provider credentials live in environment variables, while each agency/task can use its own model IDs via env-backed config.
 *   **Optional State Persistence:** Can track task status and store final results using Firestore (`firestore_schema.md`).
