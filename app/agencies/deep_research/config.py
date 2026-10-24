@@ -37,6 +37,12 @@ class DeepResearchConfig(BaseSettings):
     chunk_rerank_relevance_threshold: float = Field(default=0.5, description="Threshold for reranking content chunks.")
     
     # Orchestration parameters with defaults, loadable from env vars
+    # Rerank each search result against the sub-query that retrieved it (and its chunks likewise), keeping at
+    # least `rerank_min_results_per_query` per sub-query. False restores the original behaviour: everything
+    # reranked against the full research prompt with the threshold only (the 2026-10-23 eval baseline).
+    rerank_against_subquery: bool = Field(default=True)
+    rerank_min_results_per_query: int = Field(default=3, ge=0)
+
     max_refinement_loops: int = Field(default=2)
     max_total_chunks: int = Field(default=1000) # Ensure this is uncommented
     top_n_chunks_per_source: int = Field(default=5, description="Max chunks to keep per source after reranking.") # Configurable top N per source
