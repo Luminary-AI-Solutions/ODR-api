@@ -19,13 +19,13 @@
 
 *   **Highly Modular Design:** Built for extension! Easily add new specialized research `Agencies` (e.g., for finance, legal) in `app/agencies/` or enhance existing ones with new `Agents`.
 *   **Multi-Agency Architecture:** Organizes research tasks using specialized `Agencies`. Each agency runs independently with its own set of agents and orchestration logic.
-*   **Shareable Core Tools and Services:** Common tasks like web search (`app/services/search`), content scraping (`app/services/scraper`), text chunking (`app/services/chunking`), PDF handling (`app/services/scraping_utils`), and ranking (`app/agencies/services/ranking.py`) are isolated in `app/services/` or `app/agencies/services/`, ready to be reused by any agency. an LLM tool directory is also implemented but currently no tools are implemented.
+*   **Shareable Core Tools and Services:** Common tasks like web search (`search.py`, `search_services/serper.py`), content scraping and PDF handling (`scraper.py`, `scraper_utils/`), text chunking (`chunking.py`), and reranking (`ranking.py`) live in `app/agencies/services/`, ready to be reused by any agency. An LLM tool directory (`app/tools/`) exists but no tools are implemented yet.
 *   **Agency-Specific Orchestration:** Each agency defines its own workflow logic in its `orchestrator.py` file, allowing for diverse and complex research processes tailored to the domain.
 *   **Clear Agent Roles:** Agents within an agency typically have defined responsibilities (e.g., Planning, Summarizing, Writing, Refining), simplifying development, testing, and maintenance (`app/agencies/<agency_name>/agents.py`).
 *   **Structured LLM Interaction:** Leverages Pydantic (`app/core/schemas.py`, `app/agencies/<agency_name>/schemas.py`) to define clear input/output schemas for LLM agents, ensuring reliable and validated data flow.
-*   **Integrated Web Search:** Built-in support for [Serper](https://serper.dev/) (`app/services/search/serper_service.py`), easily adaptable for other providers.
-*   **Advanced Content Scraping:** Uses [Crawl4AI](https://github.com/extractus/crawl4ai) (`app/services/scraper/crawl4ai_scraper.py`) for robust web content extraction, including utilities for handling complex sites and formats like PDFs.
-*   **Content Reranking:** Employs reranking models (e.g., via Together AI API) to prioritize the most relevant search results and text chunks for LLM context (`app/agencies/services/ranking.py`, used by `helpers.py`).
+*   **Integrated Web Search:** Built-in support for [Serper](https://serper.dev/) (`app/agencies/services/search_services/serper.py`), easily adaptable for other providers.
+*   **Advanced Content Scraping:** Uses [Crawl4AI](https://github.com/extractus/crawl4ai) (`app/agencies/services/scraper.py`) for robust web content extraction, including utilities for handling complex sites and formats like PDFs.
+*   **Content Reranking:** Employs reranking models (Cohere by default, or Together AI) to prioritize the most relevant search results and text chunks for LLM context (`app/agencies/services/ranking.py`, used by `helpers.py`).
 *   **Asynchronous Streaming:** Provides real-time progress updates via WebSockets (see `websocket_guide.md`).
 *   **Configurable:** Shared provider credentials live in environment variables, while each agency/task can use its own model IDs via env-backed config.
 *   **Optional State Persistence:** Can track task status and store final results using Firestore (`firestore_schema.md`).
@@ -40,7 +40,7 @@ The framework promotes modularity through a clear separation of concerns:
     *   `schemas.py`: Defines Pydantic models for the agency's specific data structures and agent outputs.
     *   `prompts.py` (Optional): Stores prompts used by the agents.
     *   `helpers.py` (Optional): Contains utility functions specific to the agency's workflow, often combining calls to shared services.
-2.  **Services (`app/services/`, `app/agencies/services/`)**: Reusable, often non-LLM components providing core functionalities like search, scraping, chunking, ranking, etc. These are designed to be stateless and callable by any agency's orchestrator or helpers.
+2.  **Services (`app/agencies/services/`)**: Reusable, often non-LLM components providing core functionalities like search, scraping, chunking, ranking, etc. These are designed to be stateless and callable by any agency's orchestrator or helpers.
 3.  **Core (`app/core/`)**: Contains application-wide configurations (`config.py`), common Pydantic schemas (`schemas.py`), exception handling (`exceptions.py`), and the FastAPI application setup (`main.py`).
 4.  **Pydantic Schemas**: Act as the "glue" defining the data contracts between agents, services, and the API layer, ensuring consistency and enabling validation.
 
@@ -66,11 +66,11 @@ This detailed workflow is specific to the `deep_research` agency; other agencies
 *   **LLM Interaction:** Primarily OpenAI API client (via libraries like `openai` or potentially routing services like OpenRouter), adaptable for others supporting structured output (JSON mode/Tool Calling). Pydantic enforces output structure.
 *   **Multi-Agency Orchestration:** Custom logic or Pydantic-AI within `app/agencies/`
 *   **LLM tools** To be implemented with Pydantic-AI in future agencies.
-*   **Web Scraping:** [Crawl4AI](https://github.com/extractus/crawl4ai) (via `app/services/scraper/`)
-*   **PDF Parsing:** [MarkItDown](https://github.com/microsoft/markitdown) (via Crawl4AI or directly in `app/services/scraping_utils/`)
-*   **Web Search:** [Serper API](https://serper.dev/) (via `app/services/search/`)
-*   **Reranking:** [Together AI API](https://www.together.ai/) (via `app/agencies/services/ranking.py`)
-*   **Chunking:** Custom implementation in `app/services/chunking/`
+*   **Web Scraping:** [Crawl4AI](https://github.com/extractus/crawl4ai) (via `app/agencies/services/scraper.py`)
+*   **PDF Parsing:** [PyMuPDF](https://pymupdf.readthedocs.io/) (in `app/agencies/services/scraper.py`)
+*   **Web Search:** [Serper API](https://serper.dev/) (via `app/agencies/services/search.py`)
+*   **Reranking:** [Cohere Rerank](https://cohere.com/rerank) or [Together AI](https://www.together.ai/) (via `app/agencies/services/ranking.py`)
+*   **Chunking:** Custom implementation in `app/agencies/services/chunking.py`
 *   **State Persistence (Optional):** Google Firestore
 *   **Language:** Python 3.10+
 *   **Async:** `asyncio`
@@ -133,15 +133,15 @@ The API relies on environment variables for configuration, particularly API keys
     FIREBASE_SERVICE_ACCOUNT_KEY_JSON="/path/to/your/service-account-key.json"
 
     # Deep Research task-level model selection
-    DEEP_RESEARCH_PLANNER_MODEL_ID="openrouter/openrouter/quasar-alpha"
-    DEEP_RESEARCH_SUMMARIZER_MODEL_ID="google/gemini-2.0-flash-001"
-    DEEP_RESEARCH_WRITER_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
-    DEEP_RESEARCH_REFINER_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
+    DEEP_RESEARCH_PLANNER_MODEL_ID="openai/gpt-5.4-mini"
+    DEEP_RESEARCH_SUMMARIZER_MODEL_ID="google/gemini-3.1-flash-lite-preview"
+    DEEP_RESEARCH_WRITER_MODEL_ID="google/gemini-3.1-pro-preview"
+    DEEP_RESEARCH_REFINER_MODEL_ID="google/gemini-3.1-flash-lite-preview"
     DEEP_RESEARCH_RERANK_PROVIDER="cohere"
 
     # CPE task-level model selection
-    CPE_PLANNER_MODEL_ID="openrouter/openrouter/quasar-alpha"
-    CPE_EXTRACTOR_MODEL_ID="google/gemini-2.5-pro-preview-03-25"
+    CPE_PLANNER_MODEL_ID="openai/gpt-5.4-mini"
+    CPE_EXTRACTOR_MODEL_ID="google/gemini-3.1-flash-lite-preview"
     ```
 
     See `.env.example` for all available options including per-provider base URLs and scraper settings.
@@ -200,12 +200,12 @@ The API relies on environment variables for configuration, particularly API keys
     *   **Implement Logic:**
         *   Write your orchestration flow in `orchestrator.py`.
         *   Define your agent logic in `agents.py`, leveraging LLMs and structured output via Pydantic schemas defined in `schemas.py`.
-        *   Reuse core services from `app/services/` (e.g., `SearchService`, `WebScraper`) by importing and calling them in your orchestrator or helpers.
+        *   Reuse core services from `app/agencies/services/` (e.g., `SearchService`, `WebScraper`) by importing and calling them in your orchestrator or helpers.
     *   **Define API Endpoint:** Add FastAPI routes (e.g., a WebSocket endpoint) for your new agency in `app/main.py` or by creating a dedicated router in your agency directory and including it in `app/main.py`.
     *   **Add Configuration:** Update `app/core/config.py` if your agency requires specific settings.
     *   **Document:** Add a README or update this one explaining your agency's purpose and workflow.
 2.  **Add a New Service:**
-    *   Create a new module or directory under `app/services/` (for general services) or potentially `app/agencies/services/` (if strongly tied to agent concepts like ranking).
+    *   Create a new module under `app/agencies/services/`.
     *   Implement your service logic (e.g., connecting to a new search API, implementing a data analysis tool).
     *   Ensure it's easily callable, ideally stateless, and potentially asynchronous.
     *   Add necessary configuration to `app/core/config.py`.
@@ -225,7 +225,7 @@ The API relies on environment variables for configuration, particularly API keys
 **Other Areas for Contribution:**
 
 *   **LLM Support:** Improve compatibility or add configuration options for more LLM providers (especially those with strong structured output support).
-*   **Specialized Scrapers:** Add robust scrapers for specific sites or content types in `app/services/scraping_utils/`.
+*   **Specialized Scrapers:** Add robust scrapers for specific sites or content types in `app/agencies/services/scraper_utils/`.
 *   **Error Handling & Resilience:** Refine exception handling, retries, and state management across the framework.
 *   **Testing:** Add more comprehensive unit, integration, and agent simulation tests.
 *   **Documentation:** Improve READMEs, code comments, architecture diagrams, or API documentation (`websocket_guide.md`, `firestore_schema.md`, `docs/FRONTEND_API.md`).
