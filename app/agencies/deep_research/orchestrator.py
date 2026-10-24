@@ -22,6 +22,8 @@ from .helpers import (
     rerank_search_results_helper,
     rerank_search_results_by_query,
     rerank_chunks_helper,
+    jev_scorer,
+    jev_select_chunks_helper,
     batch_scrape_urls_helper,
     chunk_content_helper,
     format_report_citations,
@@ -248,15 +250,17 @@ async def run_deep_research_orchestration(
             api_key = app_settings.get_rerank_api_key(config.rerank_provider)
             model = config.reranker_model
             if config.rerank_against_subquery:
+                use_jev = config.search_selector == "jev"
                 reranked_initial_search_results, subquery_of = await rerank_search_results_by_query(
                     results_by_query=search_results_map,
                     model=model,
                     api_key=api_key,
-                    threshold=config.rerank_relevance_threshold,
+                    threshold=config.jev_search_min_score if use_jev else config.rerank_relevance_threshold,
                     min_per_query=config.rerank_min_results_per_query,
                     logger=logger,
                     rerank_provider=config.rerank_provider,
                     provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                    scorer=jev_scorer(user_query, app_settings, config.jev_model) if use_jev else None,
                 )
             else:
                 reranked_initial_search_results = await rerank_search_results_helper(
@@ -512,17 +516,29 @@ async def run_deep_research_orchestration(
 
                 logger.info(f"Reranking {len(source_chunks)} chunks for source: {source_url_str}")
                 try:
-                    reranked_source_chunks = await rerank_chunks_helper(
-                        query=subquery_of.get(source_url_str, user_query),
-                        chunk_dicts=source_chunks,
-                        model=model,
-                        api_key=api_key,
-                        threshold=rerank_threshold, # Use the chunk-specific threshold
-                        logger=logger,
-                        rerank_provider=config.rerank_provider,
-                        provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-                        top_n=config.top_n_chunks_per_source,
-                    )
+                    if config.chunk_selector == "jev":
+                        reranked_source_chunks = await jev_select_chunks_helper(
+                            task=user_query,
+                            query=subquery_of.get(source_url_str, user_query),
+                            chunk_dicts=source_chunks,
+                            settings=app_settings,
+                            model=config.jev_model,
+                            min_score=config.jev_chunk_min_score,
+                            logger=logger,
+                            top_n=config.top_n_chunks_per_source,
+                        )
+                    else:
+                        reranked_source_chunks = await rerank_chunks_helper(
+                            query=subquery_of.get(source_url_str, user_query),
+                            chunk_dicts=source_chunks,
+                            model=model,
+                            api_key=api_key,
+                            threshold=rerank_threshold, # Use the chunk-specific threshold
+                            logger=logger,
+                            rerank_provider=config.rerank_provider,
+                            provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                            top_n=config.top_n_chunks_per_source,
+                        )
 
                     if reranked_source_chunks:
                         relevant_chunks_from_all_sources.extend(reranked_source_chunks) # Add all returned chunks
@@ -862,15 +878,17 @@ async def run_deep_research_orchestration(
                  api_key = app_settings.get_rerank_api_key(config.rerank_provider)
                  model = config.reranker_model
                  if config.rerank_against_subquery:
+                     use_jev = config.search_selector == "jev"
                      reranked_refinement_search_results, refinement_subquery_of = await rerank_search_results_by_query(
                          results_by_query=refinement_results_map,
                          model=model, api_key=api_key,
-                         threshold=config.rerank_relevance_threshold,
+                         threshold=config.jev_search_min_score if use_jev else config.rerank_relevance_threshold,
                          min_per_query=config.rerank_min_results_per_query,
                          logger=logger,
                          rerank_provider=config.rerank_provider,
                          provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
                          exclude_links=processed_links,
+                         scorer=jev_scorer(user_query, app_settings, config.jev_model) if use_jev else None,
                      )
                      subquery_of.update(refinement_subquery_of)
                  else:
@@ -959,16 +977,28 @@ async def run_deep_research_orchestration(
                          if not source_chunks: continue
                          logger.info(f"Reranking {len(source_chunks)} refinement chunks for {source_url_str}")
                          try:
-                            reranked_src_chunks = await rerank_chunks_helper(
-                                query=subquery_of.get(source_url_str, user_query),
-                                chunk_dicts=source_chunks,
-                                model=model, api_key=api_key,
-                                threshold=config.chunk_rerank_relevance_threshold,
-                                logger=logger,
-                                rerank_provider=config.rerank_provider,
-                                provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-                                top_n=config.top_n_chunks_per_source,
-                            )
+                            if config.chunk_selector == "jev":
+                                reranked_src_chunks = await jev_select_chunks_helper(
+                                    task=user_query,
+                                    query=subquery_of.get(source_url_str, user_query),
+                                    chunk_dicts=source_chunks,
+                                    settings=app_settings,
+                                    model=config.jev_model,
+                                    min_score=config.jev_chunk_min_score,
+                                    logger=logger,
+                                    top_n=config.top_n_chunks_per_source,
+                                )
+                            else:
+                                reranked_src_chunks = await rerank_chunks_helper(
+                                    query=subquery_of.get(source_url_str, user_query),
+                                    chunk_dicts=source_chunks,
+                                    model=model, api_key=api_key,
+                                    threshold=config.chunk_rerank_relevance_threshold,
+                                    logger=logger,
+                                    rerank_provider=config.rerank_provider,
+                                    provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                                    top_n=config.top_n_chunks_per_source,
+                                )
                             if reranked_src_chunks:
                                  reranked_refinement_chunks_all.extend(reranked_src_chunks)
                                  logger.info(f"Selected {len(reranked_src_chunks)} refinement chunks for {source_url_str}")

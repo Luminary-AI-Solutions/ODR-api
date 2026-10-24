@@ -8,6 +8,7 @@ from app.core.exceptions import ScrapingError, ConfigurationError, SearchAPIErro
 from ..services.scraper import WebScraper, ExtractionResult
 from ..services.search import SearchResult, SearchTask
 from ..services.ranking import rerank_documents, RankedItem
+from ..services import jev as jev_service
 
 # --- Service Imports ---
 from ..services.search import execute_batch_serper_search, SerperConfig
@@ -278,6 +279,7 @@ async def rerank_search_results_by_query(
     rerank_provider: Literal["cohere", "together"] = "cohere",
     provider_base_url: Optional[str] = None,
     exclude_links: Optional[set] = None,
+    scorer: Optional[Any] = None,
 ) -> tuple[List[SearchResult], Dict[str, str]]:
     """Reranks each sub-query's results against that sub-query, not the full research prompt.
 
@@ -288,6 +290,8 @@ async def rerank_search_results_by_query(
 
     Returns the kept results merged round-robin by per-query rank (so the top of the list covers every
     sub-query), and a map of link -> the sub-query it was kept for (used to rerank its chunks).
+
+    `scorer(query, docs) -> scores`, if given, replaces the rerank API (e.g. Jev); `threshold` is on its scale.
     """
     exclude_links = exclude_links or set()
     kept_by_query: Dict[str, List[SearchResult]] = {}
@@ -302,16 +306,20 @@ async def rerank_search_results_by_query(
             continue
         docs = [f"{res.title}\n{res.snippet or ''}" for res in candidates]
         try:
-            ranked: List[RankedItem] = await rerank_documents(
-                query=query,
-                documents=docs,
-                model=model,
-                api_key=api_key,
-                provider=rerank_provider,
-                base_url=provider_base_url,
-                relevance_threshold=0.0,  # get every score; threshold and floor applied below
-            )
-            ordered = [(candidates[item.index], item.score) for item in ranked if 0 <= item.index < len(candidates)]
+            if scorer is not None:
+                scores = await scorer(query, docs)
+                ordered = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+            else:
+                ranked: List[RankedItem] = await rerank_documents(
+                    query=query,
+                    documents=docs,
+                    model=model,
+                    api_key=api_key,
+                    provider=rerank_provider,
+                    base_url=provider_base_url,
+                    relevance_threshold=0.0,  # get every score; threshold and floor applied below
+                )
+                ordered = [(candidates[item.index], item.score) for item in ranked if 0 <= item.index < len(candidates)]
         except RankingAPIError as e:
             logger.error(f"Rerank failed for sub-query '{query}'; keeping its results in search order: {e}")
             ordered = [(res, 0.0) for res in candidates]
@@ -330,6 +338,47 @@ async def rerank_search_results_by_query(
                     subquery_of[link] = query
                     merged.append(kept[rank])
     return merged, subquery_of
+
+
+def jev_scorer(task: str, settings: AppSettings, model: str):
+    """A `scorer` for rerank_search_results_by_query that asks Jev how well each doc answers the sub-query."""
+    async def score(query: str, docs: List[str]) -> List[float]:
+        return await jev_service.score_passages(
+            task, query, docs, api_key=settings.get_openrouter_api_key(),
+            url=jev_service.decisions_url(str(settings.openrouter_api_base)), model=model,
+        )
+    return score
+
+
+async def jev_select_chunks_helper(
+    task: str,
+    query: str,
+    chunk_dicts: List[Dict[str, Any]],
+    settings: AppSettings,
+    model: str,
+    min_score: float,
+    logger: logging.Logger,
+    top_n: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Like rerank_chunks_helper, but scored by Jev against the sub-query within the full task.
+
+    Unlike a reranker, Jev sees both the sub-question and the overall task, so a chunk that is on-topic for
+    the sub-query but useless for the task scores lower. Falls back to unranked chunks if Jev is unavailable.
+    """
+    docs = [(i, c.get('content', '')) for i, c in enumerate(chunk_dicts) if c.get('content')]
+    if not docs:
+        return []
+    try:
+        scores = await jev_service.score_passages(
+            task, query, [d for _, d in docs], api_key=settings.get_openrouter_api_key(),
+            url=jev_service.decisions_url(str(settings.openrouter_api_base)), model=model,
+        )
+    except Exception as e:
+        logger.error(f"Jev chunk scoring failed; keeping chunks unranked: {e}", exc_info=not isinstance(e, RankingAPIError))
+        return [{**chunk_dicts[i], 'score': 0.0} for i, _ in docs][:top_n]
+    kept = sorted(((i, s) for (i, _), s in zip(docs, scores) if s >= min_score), key=lambda x: x[1], reverse=True)
+    logger.info(f"Jev kept {len(kept)}/{len(docs)} chunks (min score {min_score}).")
+    return [{**chunk_dicts[i], 'score': s} for i, s in kept][:top_n]
 
 
 async def rerank_chunks_helper(

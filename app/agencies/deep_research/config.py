@@ -43,6 +43,15 @@ class DeepResearchConfig(BaseSettings):
     rerank_against_subquery: bool = Field(default=True)
     rerank_min_results_per_query: int = Field(default=3, ge=0)
 
+    # Which model scores relevance. "cohere" uses the rerank API above; "jev" uses TypeSafe's Jev decision model
+    # via OpenRouter (0-3 score: unrelated / related / partly answers / directly answers the sub-question).
+    # In the offline chunk-selection eval, Jev picked chunks with 0.76 precision vs Cohere's 0.44 from the same pool.
+    chunk_selector: Literal["cohere", "jev"] = Field(default="cohere")
+    search_selector: Literal["cohere", "jev"] = Field(default="cohere")
+    jev_model: str = Field(default="typesafe/jev-1.13")
+    jev_chunk_min_score: float = Field(default=2.0, description="Keep chunks scoring >= this ('partly answers').")
+    jev_search_min_score: float = Field(default=1.0, description="Keep search results scoring >= this ('related').")
+
     max_refinement_loops: int = Field(default=2)
     max_total_chunks: int = Field(default=1000) # Ensure this is uncommented
     top_n_chunks_per_source: int = Field(default=5, description="Max chunks to keep per source after reranking.") # Configurable top N per source

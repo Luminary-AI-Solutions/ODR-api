@@ -1,0 +1,610 @@
+[
+  {
+    "prompt_id": 52,
+    "topic": "Finance & Business",
+    "cohere": {
+      "n": 42,
+      "precision": 0.5238095238095238,
+      "relevance": 1.3571428571428572,
+      "task_precision": 0.09523809523809523,
+      "task_relevance": 0.9285714285714286,
+      "relevant_count": 22
+    },
+    "jev": {
+      "n": 41,
+      "precision": 0.9512195121951219,
+      "relevance": 1.975609756097561,
+      "task_precision": 0.17073170731707318,
+      "task_relevance": 1.170731707317073,
+      "relevant_count": 39
+    },
+    "jev_budget": {
+      "n": 42,
+      "precision": 0.7380952380952381,
+      "relevance": 1.5714285714285714,
+      "task_precision": 0.07142857142857142,
+      "task_relevance": 0.9047619047619048,
+      "relevant_count": 31
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 2.5
+    }
+  },
+  {
+    "prompt_id": 53,
+    "topic": "Finance & Business",
+    "cohere": {
+      "n": 25,
+      "precision": 0.44,
+      "relevance": 1.4,
+      "task_precision": 0.84,
+      "task_relevance": 1.84,
+      "relevant_count": 11
+    },
+    "jev": {
+      "n": 43,
+      "precision": 0.7906976744186046,
+      "relevance": 1.813953488372093,
+      "task_precision": 0.9534883720930233,
+      "task_relevance": 2,
+      "relevant_count": 34
+    },
+    "jev_budget": {
+      "n": 25,
+      "precision": 0.56,
+      "relevance": 1.56,
+      "task_precision": 0.84,
+      "task_relevance": 1.84,
+      "relevant_count": 14
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.1
+    }
+  },
+  {
+    "prompt_id": 55,
+    "topic": "Finance & Business",
+    "cohere": {
+      "n": 20,
+      "precision": 0.35,
+      "relevance": 1.4,
+      "task_precision": 0.05,
+      "task_relevance": 0.95,
+      "relevant_count": 7
+    },
+    "jev": {
+      "n": 37,
+      "precision": 0.6486486486486487,
+      "relevance": 1.7027027027027026,
+      "task_precision": 0.16216216216216217,
+      "task_relevance": 1.162162162162162,
+      "relevant_count": 24
+    },
+    "jev_budget": {
+      "n": 20,
+      "precision": 0.65,
+      "relevance": 1.75,
+      "task_precision": 0.15,
+      "task_relevance": 1.1,
+      "relevant_count": 13
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 6.4
+    }
+  },
+  {
+    "prompt_id": 58,
+    "topic": "Science & Technology",
+    "cohere": {
+      "n": 22,
+      "precision": 0.5,
+      "relevance": 1.4090909090909092,
+      "task_precision": 0.45454545454545453,
+      "task_relevance": 1.2727272727272727,
+      "relevant_count": 11
+    },
+    "jev": {
+      "n": 24,
+      "precision": 0.9166666666666666,
+      "relevance": 2,
+      "task_precision": 0.9166666666666666,
+      "task_relevance": 2.1666666666666665,
+      "relevant_count": 22
+    },
+    "jev_budget": {
+      "n": 22,
+      "precision": 0.5909090909090909,
+      "relevance": 1.5454545454545454,
+      "task_precision": 0.5454545454545454,
+      "task_relevance": 1.4545454545454546,
+      "relevant_count": 13
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 3.7
+    }
+  },
+  {
+    "prompt_id": 59,
+    "topic": "Science & Technology",
+    "cohere": {
+      "n": 25,
+      "precision": 0.4,
+      "relevance": 1.4,
+      "task_precision": 0.36,
+      "task_relevance": 1.36,
+      "relevant_count": 10
+    },
+    "jev": {
+      "n": 45,
+      "precision": 0.7111111111111111,
+      "relevance": 1.7333333333333334,
+      "task_precision": 0.5555555555555556,
+      "task_relevance": 1.5555555555555556,
+      "relevant_count": 32
+    },
+    "jev_budget": {
+      "n": 25,
+      "precision": 0.56,
+      "relevance": 1.6,
+      "task_precision": 0.44,
+      "task_relevance": 1.44,
+      "relevant_count": 14
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 6.9
+    }
+  },
+  {
+    "prompt_id": 62,
+    "topic": "Science & Technology",
+    "cohere": {
+      "n": 43,
+      "precision": 0.5348837209302325,
+      "relevance": 1.5348837209302326,
+      "task_precision": 0.3023255813953488,
+      "task_relevance": 1.2093023255813953,
+      "relevant_count": 23
+    },
+    "jev": {
+      "n": 35,
+      "precision": 0.7142857142857143,
+      "relevance": 1.8,
+      "task_precision": 0.4,
+      "task_relevance": 1.3714285714285714,
+      "relevant_count": 25
+    },
+    "jev_budget": {
+      "n": 43,
+      "precision": 0.5116279069767442,
+      "relevance": 1.5116279069767442,
+      "task_precision": 0.3023255813953488,
+      "task_relevance": 1.186046511627907,
+      "relevant_count": 22
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.2
+    }
+  },
+  {
+    "prompt_id": 66,
+    "topic": "Software Development",
+    "cohere": {
+      "n": 113,
+      "precision": 0.49557522123893805,
+      "relevance": 1.5221238938053097,
+      "task_precision": 0.07964601769911504,
+      "task_relevance": 0.9734513274336283,
+      "relevant_count": 56
+    },
+    "jev": {
+      "n": 54,
+      "precision": 0.7962962962962963,
+      "relevance": 1.8888888888888888,
+      "task_precision": 0.16666666666666666,
+      "task_relevance": 1.1481481481481481,
+      "relevant_count": 43
+    },
+    "jev_budget": {
+      "n": 113,
+      "precision": 0.5398230088495575,
+      "relevance": 1.584070796460177,
+      "task_precision": 0.09734513274336283,
+      "task_relevance": 1.0176991150442478,
+      "relevant_count": 61
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.6
+    }
+  },
+  {
+    "prompt_id": 68,
+    "topic": "Software Development",
+    "cohere": {
+      "n": 77,
+      "precision": 0.5064935064935064,
+      "relevance": 1.5584415584415585,
+      "task_precision": 0.11688311688311688,
+      "task_relevance": 0.987012987012987,
+      "relevant_count": 39
+    },
+    "jev": {
+      "n": 63,
+      "precision": 0.8412698412698413,
+      "relevance": 1.9523809523809523,
+      "task_precision": 0.15873015873015872,
+      "task_relevance": 1.1587301587301588,
+      "relevant_count": 53
+    },
+    "jev_budget": {
+      "n": 77,
+      "precision": 0.6103896103896104,
+      "relevance": 1.6883116883116882,
+      "task_precision": 0.15584415584415584,
+      "task_relevance": 1.0649350649350648,
+      "relevant_count": 47
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 3.9
+    }
+  },
+  {
+    "prompt_id": 72,
+    "topic": "Education & Jobs",
+    "cohere": {
+      "n": 44,
+      "precision": 0.45454545454545453,
+      "relevance": 1.3409090909090908,
+      "task_precision": 0.2727272727272727,
+      "task_relevance": 1.1136363636363635,
+      "relevant_count": 20
+    },
+    "jev": {
+      "n": 49,
+      "precision": 0.9591836734693877,
+      "relevance": 2.122448979591837,
+      "task_precision": 0.5102040816326531,
+      "task_relevance": 1.510204081632653,
+      "relevant_count": 47
+    },
+    "jev_budget": {
+      "n": 44,
+      "precision": 0.5681818181818182,
+      "relevance": 1.5681818181818181,
+      "task_precision": 0.3181818181818182,
+      "task_relevance": 1.1818181818181819,
+      "relevant_count": 25
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.7
+    }
+  },
+  {
+    "prompt_id": 74,
+    "topic": "Education & Jobs",
+    "cohere": {
+      "n": 38,
+      "precision": 0.5263157894736842,
+      "relevance": 1.5789473684210527,
+      "task_precision": 0.15789473684210525,
+      "task_relevance": 1.105263157894737,
+      "relevant_count": 20
+    },
+    "jev": {
+      "n": 63,
+      "precision": 0.9047619047619048,
+      "relevance": 1.9841269841269842,
+      "task_precision": 0.3492063492063492,
+      "task_relevance": 1.3333333333333333,
+      "relevant_count": 57
+    },
+    "jev_budget": {
+      "n": 38,
+      "precision": 0.8157894736842105,
+      "relevance": 1.9473684210526316,
+      "task_precision": 0.2631578947368421,
+      "task_relevance": 1.236842105263158,
+      "relevant_count": 31
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 6.7
+    }
+  },
+  {
+    "prompt_id": 75,
+    "topic": "Health",
+    "cohere": {
+      "n": 20,
+      "precision": 0.55,
+      "relevance": 1.55,
+      "task_precision": 0.5,
+      "task_relevance": 1.5,
+      "relevant_count": 11
+    },
+    "jev": {
+      "n": 30,
+      "precision": 0.7333333333333333,
+      "relevance": 1.7333333333333334,
+      "task_precision": 0.7333333333333333,
+      "task_relevance": 1.6666666666666667,
+      "relevant_count": 22
+    },
+    "jev_budget": {
+      "n": 20,
+      "precision": 0.75,
+      "relevance": 1.75,
+      "task_precision": 0.75,
+      "task_relevance": 1.65,
+      "relevant_count": 15
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.6
+    }
+  },
+  {
+    "prompt_id": 77,
+    "topic": "Health",
+    "cohere": {
+      "n": 18,
+      "precision": 0.5,
+      "relevance": 1.3888888888888888,
+      "task_precision": 0.2777777777777778,
+      "task_relevance": 0.7777777777777778,
+      "relevant_count": 9
+    },
+    "jev": {
+      "n": 9,
+      "precision": 0.6666666666666666,
+      "relevance": 2.111111111111111,
+      "task_precision": 0.4444444444444444,
+      "task_relevance": 1.4444444444444444,
+      "relevant_count": 6
+    },
+    "jev_budget": {
+      "n": 18,
+      "precision": 0.5555555555555556,
+      "relevance": 1.6111111111111112,
+      "task_precision": 0.2777777777777778,
+      "task_relevance": 1.0555555555555556,
+      "relevant_count": 10
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 6.4
+    }
+  },
+  {
+    "prompt_id": 80,
+    "topic": "Literature",
+    "cohere": {
+      "n": 19,
+      "precision": 0.10526315789473684,
+      "relevance": 0.42105263157894735,
+      "task_precision": 0.0,
+      "task_relevance": 0.10526315789473684,
+      "relevant_count": 2
+    },
+    "jev": {
+      "n": 3,
+      "precision": 0.6666666666666666,
+      "relevance": 2,
+      "task_precision": 0.0,
+      "task_relevance": 0.6666666666666666,
+      "relevant_count": 2
+    },
+    "jev_budget": {
+      "n": 19,
+      "precision": 0.10526315789473684,
+      "relevance": 0.42105263157894735,
+      "task_precision": 0.0,
+      "task_relevance": 0.10526315789473684,
+      "relevant_count": 2
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 1.2
+    }
+  },
+  {
+    "prompt_id": 81,
+    "topic": "History",
+    "cohere": {
+      "n": 30,
+      "precision": 0.26666666666666666,
+      "relevance": 1.0666666666666667,
+      "task_precision": 0.3333333333333333,
+      "task_relevance": 0.9,
+      "relevant_count": 8
+    },
+    "jev": {
+      "n": 21,
+      "precision": 0.6666666666666666,
+      "relevance": 1.9523809523809523,
+      "task_precision": 0.6666666666666666,
+      "task_relevance": 1.6666666666666667,
+      "relevant_count": 14
+    },
+    "jev_budget": {
+      "n": 30,
+      "precision": 0.36666666666666664,
+      "relevance": 1.2,
+      "task_precision": 0.4,
+      "task_relevance": 0.9666666666666667,
+      "relevant_count": 11
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 1.8
+    }
+  },
+  {
+    "prompt_id": 83,
+    "topic": "Hardware",
+    "cohere": {
+      "n": 75,
+      "precision": 0.2,
+      "relevance": 1.1466666666666667,
+      "task_precision": 0.08,
+      "task_relevance": 1.0666666666666667,
+      "relevant_count": 15
+    },
+    "jev": {
+      "n": 21,
+      "precision": 0.6666666666666666,
+      "relevance": 1.6666666666666667,
+      "task_precision": 0.047619047619047616,
+      "task_relevance": 1.0476190476190477,
+      "relevant_count": 14
+    },
+    "jev_budget": {
+      "n": 75,
+      "precision": 0.16,
+      "relevance": 1.16,
+      "task_precision": 0.09333333333333334,
+      "task_relevance": 1.0933333333333333,
+      "relevant_count": 12
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.8
+    }
+  },
+  {
+    "prompt_id": 86,
+    "topic": "Industrial",
+    "cohere": {
+      "n": 15,
+      "precision": 0.2,
+      "relevance": 1.1333333333333333,
+      "task_precision": 0.0,
+      "task_relevance": 0.8,
+      "relevant_count": 3
+    },
+    "jev": {
+      "n": 6,
+      "precision": 0.3333333333333333,
+      "relevance": 1.3333333333333333,
+      "task_precision": 0.0,
+      "task_relevance": 1,
+      "relevant_count": 2
+    },
+    "jev_budget": {
+      "n": 15,
+      "precision": 0.26666666666666666,
+      "relevance": 1.2,
+      "task_precision": 0.0,
+      "task_relevance": 0.8666666666666667,
+      "relevant_count": 4
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 2.2
+    }
+  },
+  {
+    "prompt_id": 87,
+    "topic": "Art & Design",
+    "cohere": {
+      "n": 77,
+      "precision": 0.7142857142857143,
+      "relevance": 1.7922077922077921,
+      "task_precision": 0.07792207792207792,
+      "task_relevance": 0.987012987012987,
+      "relevant_count": 55
+    },
+    "jev": {
+      "n": 79,
+      "precision": 0.810126582278481,
+      "relevance": 1.9367088607594938,
+      "task_precision": 0.13924050632911392,
+      "task_relevance": 1.1265822784810127,
+      "relevant_count": 64
+    },
+    "jev_budget": {
+      "n": 77,
+      "precision": 0.8181818181818182,
+      "relevance": 1.9350649350649352,
+      "task_precision": 0.11688311688311688,
+      "task_relevance": 1.077922077922078,
+      "relevant_count": 63
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 5.3
+    }
+  },
+  {
+    "prompt_id": 90,
+    "topic": "Crime & Law",
+    "cohere": {
+      "n": 75,
+      "precision": 0.6266666666666667,
+      "relevance": 1.7466666666666666,
+      "task_precision": 0.05333333333333334,
+      "task_relevance": 1.0266666666666666,
+      "relevant_count": 47
+    },
+    "jev": {
+      "n": 53,
+      "precision": 0.9622641509433962,
+      "relevance": 2.150943396226415,
+      "task_precision": 0.11320754716981132,
+      "task_relevance": 1.0943396226415094,
+      "relevant_count": 51
+    },
+    "jev_budget": {
+      "n": 75,
+      "precision": 0.7733333333333333,
+      "relevance": 1.9066666666666667,
+      "task_precision": 0.08,
+      "task_relevance": 1.0666666666666667,
+      "relevant_count": 58
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 3.3
+    }
+  },
+  {
+    "prompt_id": 99,
+    "topic": "Fashion & Beauty",
+    "cohere": {
+      "n": 48,
+      "precision": 0.375,
+      "relevance": 1.4583333333333333,
+      "task_precision": 0.041666666666666664,
+      "task_relevance": 0.9166666666666666,
+      "relevant_count": 18
+    },
+    "jev": {
+      "n": 56,
+      "precision": 0.6428571428571429,
+      "relevance": 1.75,
+      "task_precision": 0.3392857142857143,
+      "task_relevance": 1.3392857142857142,
+      "relevant_count": 36
+    },
+    "jev_budget": {
+      "n": 48,
+      "precision": 0.5625,
+      "relevance": 1.6875,
+      "task_precision": 0.2708333333333333,
+      "task_relevance": 1.2708333333333333,
+      "relevant_count": 27
+    },
+    "latency_s": {
+      "cohere": 0.0,
+      "jev": 6.0
+    }
+  }
+]
