@@ -1,0 +1,19 @@
+{
+  "flow": "report_quality",
+  "description": "DeepResearch Bench RACE (vs reference report, 0.5 = on par) and FACT citation support against the writer's own evidence.",
+  "metrics": [
+    {"id": "race_overall", "label": "RACE", "kind": "float", "scale": 1},
+    {"id": "race_comprehensiveness", "label": "Comprehensive", "kind": "float", "scale": 1},
+    {"id": "race_insight", "label": "Insight", "kind": "float", "scale": 1},
+    {"id": "race_instruction_following", "label": "Instr follow", "kind": "float", "scale": 1},
+    {"id": "race_readability", "label": "Readability", "kind": "float", "scale": 1},
+    {"id": "fact_citation_accuracy", "label": "Cite accuracy", "kind": "float", "scale": 1},
+    {"id": "fact_effective_citations", "label": "Eff. cites", "kind": "float", "scale": 100}
+  ],
+  "perf_fields": [
+    {"id": "pipeline_cost_usd", "label": "pipeline $", "unit": "$"},
+    {"id": "pipeline_latency_s", "label": "pipeline s", "unit": "s"},
+    {"id": "judge_cost_usd", "label": "judge $", "unit": "$"},
+    {"id": "report_words", "label": "words"}
+  ]
+}
