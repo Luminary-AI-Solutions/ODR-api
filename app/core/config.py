@@ -92,6 +92,10 @@ class AppSettings(BaseSettings):
             "CPE_OPENROUTER_API_KEY",
         ),
     )
+    anthropic_api_key: Optional[SecretStr] = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY"),
+    )
     cohere_api_key: Optional[SecretStr] = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -149,6 +153,9 @@ class AppSettings(BaseSettings):
 
     def get_openrouter_api_key(self) -> str:
         return self._require_secret(self.openrouter_api_key, "OPENROUTER_API_KEY")
+
+    def get_anthropic_api_key(self) -> str:
+        return self._require_secret(self.anthropic_api_key, "ANTHROPIC_API_KEY")
 
     def get_rerank_api_key(self, provider: Literal["cohere", "together"]) -> str:
         if provider == "cohere":

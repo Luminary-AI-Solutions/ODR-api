@@ -3,11 +3,12 @@ import json
 import logging
 import traceback
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 
 # --- Add Firestore Client type --- #
 from google.cloud.firestore_v1.client import Client
-from fastapi import APIRouter, Depends, HTTPException, Path, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from firebase_admin import firestore
 from pydantic import ValidationError
@@ -477,3 +478,89 @@ async def stop_research_task_route(
         logger.error(f"Firestore error updating task {task_id} status to CANCELLED: {e}", exc_info=True)
         # Even if cancellation signal was sent, the final status update failed
         raise HTTPException(status_code=500, detail="Failed to update task status to cancelled in storage.")
+
+
+_IN_PROGRESS_STATUSES = frozenset({"PENDING", "PROCESSING"})
+
+
+@router.delete("/reports/old", status_code=200)
+async def delete_old_research_reports_route(
+    older_than_days: int = Query(
+        90,
+        ge=1,
+        le=3650,
+        description="Delete persisted tasks whose createdAt is strictly before this many days ago (UTC).",
+    ),
+    include_in_progress: bool = Query(
+        False,
+        description="If true, also delete tasks still marked PENDING or PROCESSING when older than the cutoff.",
+    ),
+    dry_run: bool = Query(
+        False,
+        description="If true, return how many documents would be deleted without deleting them.",
+    ),
+    db: Optional[Client] = Depends(get_firestore_db),
+):
+    """
+    Remove old documents from the `research_tasks` Firestore collection (retention cleanup).
+
+    By default, tasks that are still PENDING or PROCESSING are skipped unless `include_in_progress` is true.
+    """
+    if not db:
+        logger.error("delete_old_research_reports_route: Firestore DB unavailable.")
+        raise HTTPException(status_code=503, detail="Task storage is unavailable (Firestore not configured).")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+
+    try:
+        query = db.collection("research_tasks").where("createdAt", "<", cutoff)
+        candidates = list(query.stream())
+    except Exception as e:
+        logger.error(f"Firestore error listing old research_tasks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error querying research tasks for cleanup.")
+
+    to_delete = []
+    for snap in candidates:
+        data = snap.to_dict() or {}
+        status = data.get("status")
+        if not include_in_progress and status in _IN_PROGRESS_STATUSES:
+            continue
+        to_delete.append(snap.reference)
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "would_delete": len(to_delete),
+            "older_than_days": older_than_days,
+            "cutoff": cutoff.isoformat(),
+            "include_in_progress": include_in_progress,
+        }
+
+    deleted = 0
+    batch = db.batch()
+    n_in_batch = 0
+    for ref in to_delete:
+        batch.delete(ref)
+        n_in_batch += 1
+        if n_in_batch >= 500:
+            batch.commit()
+            deleted += n_in_batch
+            batch = db.batch()
+            n_in_batch = 0
+    if n_in_batch:
+        batch.commit()
+        deleted += n_in_batch
+
+    logger.info(
+        "Deleted %s old research_tasks (older_than_days=%s, include_in_progress=%s).",
+        deleted,
+        older_than_days,
+        include_in_progress,
+    )
+    return {
+        "dry_run": False,
+        "deleted": deleted,
+        "older_than_days": older_than_days,
+        "cutoff": cutoff.isoformat(),
+        "include_in_progress": include_in_progress,
+    }

@@ -20,7 +20,10 @@ from .config import DeepResearchConfig
 from .helpers import (
     execute_search_queries,
     rerank_search_results_helper,
+    rerank_search_results_by_query,
     rerank_chunks_helper,
+    jev_scorer,
+    jev_select_chunks_helper,
     batch_scrape_urls_helper,
     chunk_content_helper,
     format_report_citations,
@@ -47,6 +50,17 @@ logger = logging.getLogger(__name__)
 # Max tokens allowed for the combined context (summaries + chunks) for the writer
 MAX_WRITER_CONTEXT_TOKENS = 600_000
 
+
+def _record_served_model(trace: Optional[Dict[str, Any]], role: str, result: Any) -> None:
+    """Record which model actually answered an agent call (for eval runs; no-op without a trace)."""
+    if trace is None:
+        return
+    try:
+        model_name = result.all_messages()[-1].model_name
+    except Exception:
+        model_name = None
+    trace.setdefault("served_models", {}).setdefault(role, set()).add(model_name)
+
 async def run_deep_research_orchestration(
     user_query: str,
     agents_collection: agents.AgencyAgents,
@@ -56,10 +70,14 @@ async def run_deep_research_orchestration(
     update_callback: Optional[WebSocketUpdateHandler] = None,
     # Add Firestore parameters
     task_doc_ref: Optional[DocumentReference] = None,
-    firestore_available: bool = False
+    firestore_available: bool = False,
+    trace: Optional[Dict[str, Any]] = None,
 ) -> schemas.ResearchResponse:
     """
     Orchestrates the deep research multi-agent process.
+
+    If `trace` is a dict, intermediate artifacts (search results, reranker order, writer context,
+    raw draft) are recorded into it for offline evaluation. It has no effect on the run itself.
     """
     # Initialize the new RunUsage tracker
     usage_tracker = RunUsage()
@@ -108,6 +126,7 @@ async def run_deep_research_orchestration(
 
         # Revert: Expect PlannerOutput directly now that result_type is set
         planner_output: schemas.PlannerOutput = planner_result.output
+        _record_served_model(trace, "planner", planner_result)
 
         # Type check for safety (optional, but good practice)
         if not isinstance(planner_output, schemas.PlannerOutput):
@@ -189,6 +208,8 @@ async def run_deep_research_orchestration(
 
     initial_search_results: List[SearchResult] = []
     reranked_initial_search_results: List[SearchResult] = []
+    # link -> sub-query it was kept for; chunks are reranked against it (empty in full-prompt mode)
+    subquery_of: Dict[str, str] = {}
     try:
         serper_cfg = app_settings.build_serper_config()
         search_results_map = await execute_search_queries(
@@ -209,6 +230,11 @@ async def run_deep_research_orchestration(
                     initial_search_links_seen.add(result.link)
         initial_search_results = temp_results
         logger.info(f"Initial search yielded {len(initial_search_results)} unique results before reranking.")
+        if trace is not None:
+            trace["search_queries"] = {
+                q: [str(r.link) for r in rs] for q, rs in search_results_map.items()
+            }
+            trace["initial_search_results"] = [r.model_dump(mode="json") for r in initial_search_results]
 
         # Send search end update before reranking starts
         if update_callback:
@@ -223,16 +249,30 @@ async def run_deep_research_orchestration(
                 await update_callback.initial_rerank_start(len(initial_search_results))
             api_key = app_settings.get_rerank_api_key(config.rerank_provider)
             model = config.reranker_model
-            reranked_initial_search_results = await rerank_search_results_helper(
-                 query=user_query,
-                 search_results=initial_search_results,
-                 model=model,
-                 api_key=api_key,
-                 threshold=config.rerank_relevance_threshold,
-                 logger=logger,
-                 rerank_provider=config.rerank_provider,
-                 provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-            )
+            if config.rerank_against_subquery:
+                use_jev = config.search_selector == "jev"
+                reranked_initial_search_results, subquery_of = await rerank_search_results_by_query(
+                    results_by_query=search_results_map,
+                    model=model,
+                    api_key=api_key,
+                    threshold=config.jev_search_min_score if use_jev else config.rerank_relevance_threshold,
+                    min_per_query=config.rerank_min_results_per_query,
+                    logger=logger,
+                    rerank_provider=config.rerank_provider,
+                    provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                    scorer=jev_scorer(user_query, app_settings, config.jev_model) if use_jev else None,
+                )
+            else:
+                reranked_initial_search_results = await rerank_search_results_helper(
+                     query=user_query,
+                     search_results=initial_search_results,
+                     model=model,
+                     api_key=api_key,
+                     threshold=config.rerank_relevance_threshold,
+                     logger=logger,
+                     rerank_provider=config.rerank_provider,
+                     provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                )
         else:
             # If no results to rerank, send a simplified end update? Or skip?
             # Let's send an end update indicating 0 results.
@@ -242,6 +282,8 @@ async def run_deep_research_orchestration(
 
         if not reranked_initial_search_results:
              logger.warning("Initial search and reranking yielded no results.")
+        if trace is not None:
+            trace["reranked_initial_links"] = [str(r.link) for r in reranked_initial_search_results]
 
     # Catch config errors separately as they prevent continuation
     except ConfigurationError as e:
@@ -270,6 +312,9 @@ async def run_deep_research_orchestration(
         top_results_for_summary = reranked_initial_search_results[:top_n_calculated]
         secondary_results_for_chunking = reranked_initial_search_results[top_n_calculated:]
         logger.info(f"Split results: {len(top_results_for_summary)} for summary, {len(secondary_results_for_chunking)} for chunking/reranking.")
+        if trace is not None:
+            trace["summary_links"] = [str(r.link) for r in top_results_for_summary]
+            trace["chunking_links"] = [str(r.link) for r in secondary_results_for_chunking]
     else:
          logger.warning("Proceeding without any reranked search results.")
 
@@ -350,6 +395,7 @@ async def run_deep_research_orchestration(
                 summarizer_result = await agents_collection.summarizer.run(
                     user_message
                 )
+                _record_served_model(trace, "summarizer", summarizer_result)
                 
                 # Attempt to access and log the summary content first
                 summary_content = None
@@ -470,16 +516,29 @@ async def run_deep_research_orchestration(
 
                 logger.info(f"Reranking {len(source_chunks)} chunks for source: {source_url_str}")
                 try:
-                    reranked_source_chunks = await rerank_chunks_helper(
-                        query=user_query, # Rerank based on the main query
-                        chunk_dicts=source_chunks,
-                        model=model,
-                        api_key=api_key,
-                        threshold=rerank_threshold, # Use the chunk-specific threshold
-                        logger=logger,
-                        rerank_provider=config.rerank_provider,
-                        provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-                    )
+                    if config.chunk_selector == "jev":
+                        reranked_source_chunks = await jev_select_chunks_helper(
+                            task=user_query,
+                            query=subquery_of.get(source_url_str, user_query),
+                            chunk_dicts=source_chunks,
+                            settings=app_settings,
+                            model=config.jev_model,
+                            min_score=config.jev_chunk_min_score,
+                            logger=logger,
+                            top_n=config.top_n_chunks_per_source,
+                        )
+                    else:
+                        reranked_source_chunks = await rerank_chunks_helper(
+                            query=subquery_of.get(source_url_str, user_query),
+                            chunk_dicts=source_chunks,
+                            model=model,
+                            api_key=api_key,
+                            threshold=rerank_threshold, # Use the chunk-specific threshold
+                            logger=logger,
+                            rerank_provider=config.rerank_provider,
+                            provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                            top_n=config.top_n_chunks_per_source,
+                        )
 
                     if reranked_source_chunks:
                         relevant_chunks_from_all_sources.extend(reranked_source_chunks) # Add all returned chunks
@@ -647,6 +706,10 @@ async def run_deep_research_orchestration(
     if update_callback:
         await update_callback.writing_start(len(all_source_materials))
 
+    if trace is not None:
+        trace["writer_context"] = [dict(m) for m in all_source_materials]
+        trace["refinement_rounds"] = []
+
     if not all_source_materials:
         logger.warning("No source materials processed, cannot generate report.")
         # Use get_statistics() for the final response
@@ -679,6 +742,7 @@ async def run_deep_research_orchestration(
             if writer_result and hasattr(writer_result, 'output'):
                 if isinstance(writer_result.output, schemas.WriterOutput):
                     writer_output = writer_result.output
+                    _record_served_model(trace, "writer", writer_result)
                     if writer_output.report_content:
                         log_prefix = writer_output.report_content[:200].replace("\n", " ") + ("..." if len(writer_output.report_content) > 200 else "")
                         logger.info(f"Initial Writer generated content: '{log_prefix}'")
@@ -801,22 +865,42 @@ async def run_deep_research_orchestration(
                            newly_added_links_temp.add(link_str)
 
             logger.info(f"Refinement search yielded {len(temp_results)} new unique results before reranking.")
+            if trace is not None:
+                trace["refinement_rounds"].append({
+                    "loop": refinement_loop_count,
+                    "queries": [t.query for t in refinement_tasks],
+                    "search_queries": {q: [str(r.link) for r in rs] for q, rs in refinement_results_map.items()},
+                    "search_results": [r.model_dump(mode="json") for r in temp_results],
+                })
 
             # Rerank these new results
             if temp_results:
                  api_key = app_settings.get_rerank_api_key(config.rerank_provider)
                  model = config.reranker_model
-                 # Combine user query and refinement topic? For now, use user query.
-                 rerank_query = user_query # requested_searches[0].query if requested_searches else user_query
-                 reranked_refinement_search_results = await rerank_search_results_helper(
-                     query=rerank_query,
-                     search_results=temp_results,
-                     model=model, api_key=api_key,
-                     threshold=config.rerank_relevance_threshold,
-                     logger=logger,
-                     rerank_provider=config.rerank_provider,
-                     provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-                 )
+                 if config.rerank_against_subquery:
+                     use_jev = config.search_selector == "jev"
+                     reranked_refinement_search_results, refinement_subquery_of = await rerank_search_results_by_query(
+                         results_by_query=refinement_results_map,
+                         model=model, api_key=api_key,
+                         threshold=config.jev_search_min_score if use_jev else config.rerank_relevance_threshold,
+                         min_per_query=config.rerank_min_results_per_query,
+                         logger=logger,
+                         rerank_provider=config.rerank_provider,
+                         provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                         exclude_links=processed_links,
+                         scorer=jev_scorer(user_query, app_settings, config.jev_model) if use_jev else None,
+                     )
+                     subquery_of.update(refinement_subquery_of)
+                 else:
+                     reranked_refinement_search_results = await rerank_search_results_helper(
+                         query=user_query,
+                         search_results=temp_results,
+                         model=model, api_key=api_key,
+                         threshold=config.rerank_relevance_threshold,
+                         logger=logger,
+                         rerank_provider=config.rerank_provider,
+                         provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                     )
             else:
                  reranked_refinement_search_results = []
 
@@ -893,15 +977,28 @@ async def run_deep_research_orchestration(
                          if not source_chunks: continue
                          logger.info(f"Reranking {len(source_chunks)} refinement chunks for {source_url_str}")
                          try:
-                            reranked_src_chunks = await rerank_chunks_helper(
-                                query=user_query, # Or maybe use refinement topic query?
-                                chunk_dicts=source_chunks,
-                                model=model, api_key=api_key,
-                                threshold=config.chunk_rerank_relevance_threshold,
-                                logger=logger,
-                                rerank_provider=config.rerank_provider,
-                                provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
-                            )
+                            if config.chunk_selector == "jev":
+                                reranked_src_chunks = await jev_select_chunks_helper(
+                                    task=user_query,
+                                    query=subquery_of.get(source_url_str, user_query),
+                                    chunk_dicts=source_chunks,
+                                    settings=app_settings,
+                                    model=config.jev_model,
+                                    min_score=config.jev_chunk_min_score,
+                                    logger=logger,
+                                    top_n=config.top_n_chunks_per_source,
+                                )
+                            else:
+                                reranked_src_chunks = await rerank_chunks_helper(
+                                    query=subquery_of.get(source_url_str, user_query),
+                                    chunk_dicts=source_chunks,
+                                    model=model, api_key=api_key,
+                                    threshold=config.chunk_rerank_relevance_threshold,
+                                    logger=logger,
+                                    rerank_provider=config.rerank_provider,
+                                    provider_base_url=app_settings.get_rerank_api_base(config.rerank_provider),
+                                    top_n=config.top_n_chunks_per_source,
+                                )
                             if reranked_src_chunks:
                                  reranked_refinement_chunks_all.extend(reranked_src_chunks)
                                  logger.info(f"Selected {len(reranked_src_chunks)} refinement chunks for {source_url_str}")
@@ -967,6 +1064,8 @@ async def run_deep_research_orchestration(
             await update_callback.refinement_refiner_start(refinement_loop_count)
 
         try:
+            if trace is not None and trace["refinement_rounds"]:
+                trace["refinement_rounds"][-1]["new_context"] = [dict(m) for m in new_materials_in_this_loop]
             # Pass only the newly added materials for context
             formatted_new_context = agents.format_summaries_for_prompt(new_materials_in_this_loop)
             refinement_topic = requested_searches[0].query if requested_searches else "requested information"
@@ -985,6 +1084,7 @@ async def run_deep_research_orchestration(
             if refiner_result and hasattr(refiner_result, 'output'):
                 if isinstance(refiner_result.output, schemas.WriterOutput):
                     refiner_output = refiner_result.output
+                    _record_served_model(trace, "refiner", refiner_result)
                     if refiner_output.report_content:
                         log_prefix = refiner_output.report_content[:200].replace("\n", " ") + ("..." if len(refiner_output.report_content) > 200 else "")
                         logger.info(f"Refiner (Loop {refinement_loop_count}) generated content: '{log_prefix}'")
@@ -1045,6 +1145,9 @@ async def run_deep_research_orchestration(
         await update_callback.finalizing_start()
 
     final_report_content = current_draft # Start with the raw content from writer/refiner
+    if trace is not None:
+        trace["raw_draft"] = current_draft
+        trace["unique_sources"] = {link: dict(info) for link, info in unique_sources.items()}
 
     # Use helper function to add clickable citation links
     processed_report_content = format_report_citations(final_report_content, logger)
