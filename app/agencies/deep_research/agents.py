@@ -1,7 +1,11 @@
 import logging
 from pydantic import BaseModel, ConfigDict
-from pydantic_ai import Agent, RunContext, ModelRetry
+from pydantic_ai import Agent, RunContext, ModelRetry, NativeOutput
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from typing import Dict, TYPE_CHECKING, Any
 import re
@@ -273,13 +277,46 @@ def format_summaries_for_prompt(source_materials: list[Dict[str, Any]]) -> str:
     return formatted_string.strip()
 
 
-def create_llm_model(model_id: str, settings: AppSettings) -> OpenAIModel:
-    """Helper function to create an OpenAI-compatible model instance for OpenRouter."""
+ANTHROPIC_PREFIX = "anthropic:"
+
+# pydantic-ai's built-in Anthropic profile predates the 5.x models, so declare their capabilities:
+# structured outputs (used instead of forced tool use, which current models reject), adaptive thinking, effort.
+_ANTHROPIC_PROFILE = AnthropicModelProfile(
+    json_schema_transformer=AnthropicJsonSchemaTransformer,
+    thinking_tags=('<thinking>', '</thinking>'),
+    supports_json_schema_output=True,
+    supports_thinking=True,
+    anthropic_supports_adaptive_thinking=True,
+    anthropic_supports_effort=True,
+)
+
+
+def create_llm_model(model_id: str, settings: AppSettings, max_tokens: int = 16000) -> Model:
+    """
+    Create the model for an agent.
+
+    IDs prefixed with "anthropic:" (e.g. "anthropic:claude-sonnet-5-5") call the Anthropic API directly;
+    anything else is treated as an OpenRouter model ID.
+    """
+    if model_id.startswith(ANTHROPIC_PREFIX):
+        provider = AnthropicProvider(api_key=settings.get_anthropic_api_key())
+        return AnthropicModel(
+            model_id[len(ANTHROPIC_PREFIX):],
+            provider=provider,
+            profile=_ANTHROPIC_PROFILE,
+            # pydantic-ai defaults to 4096, which would truncate reports; thinking tokens also count here.
+            settings={"max_tokens": max_tokens},
+        )
     provider = OpenAIProvider(
         api_key=settings.get_openrouter_api_key(),
         base_url=str(settings.openrouter_api_base),
     )
     return OpenAIModel(model_id, provider=provider)
+
+
+def _structured_output(model_id: str, output_cls: type) -> Any:
+    """Anthropic models use native structured outputs; OpenRouter models keep pydantic-ai's default tool output."""
+    return NativeOutput(output_cls, strict=True) if model_id.startswith(ANTHROPIC_PREFIX) else output_cls
 
 # --- Agent Definitions --- 
 
@@ -293,7 +330,7 @@ def create_planner_agent(config: DeepResearchConfig, settings: AppSettings) -> A
     ](
         model=planner_model,
         system_prompt=_PLANNER_SYSTEM_PROMPT,
-        output_type=schemas.PlannerOutput,
+        output_type=_structured_output(model_id, schemas.PlannerOutput),
         retries=5
     )
 
@@ -313,12 +350,12 @@ def create_writer_agent(config: DeepResearchConfig, settings: AppSettings) -> Ag
     """Creates the Writer Agent instance."""
     model_id = config.writer_model_id # Get model_id from config
     logger.debug(f"Creating Writer Agent with model: {model_id}") # Log the id directly
-    writer_model = create_llm_model(model_id, settings)
+    writer_model = create_llm_model(model_id, settings, max_tokens=32000)
     return Agent[schemas.WriterOutput](
         model=writer_model,
         system_prompt=_WRITER_SYSTEM_PROMPT_BASE,
         deps_type=None,
-        output_type=schemas.WriterOutput,
+        output_type=_structured_output(model_id, schemas.WriterOutput),
         retries=3
     )
 
@@ -329,12 +366,12 @@ def create_refiner_agent(config: DeepResearchConfig, settings: AppSettings) -> A
     """
     model_id = config.refiner_model_id # Get model_id from config
     logger.debug(f"Creating Refiner Agent with model: {model_id}") # Log the id directly
-    refiner_model = create_llm_model(model_id, settings)
+    refiner_model = create_llm_model(model_id, settings, max_tokens=32000)
     return Agent[schemas.WriterOutput](
         model=refiner_model,
         system_prompt=_REFINEMENT_SYSTEM_PROMPT,
         deps_type=None,
-        output_type=schemas.WriterOutput,
+        output_type=_structured_output(model_id, schemas.WriterOutput),
         retries=3
     )
 
@@ -377,7 +414,7 @@ def get_agency_agents(config: DeepResearchConfig, settings: AppSettings) -> Agen
 
     logger.info("Added citation validator to Writer and Refiner agents via decorator.")
 
-    logger.info("Initialized Agency Agents (Planner, Summarizer, Writer, Refiner) using OpenRouter.")
+    logger.info("Initialized Agency Agents (Planner, Summarizer, Writer, Refiner).")
 
     return AgencyAgents(
         planner=planner,

@@ -1,0 +1,16 @@
+{
+  "sha256": "a4eee1b4c92078e41e1cfce98dda2cc53ee86304ddfd14c0a19fb80ada9846cc",
+  "files": [
+    "evals/common.py",
+    "evals/prompts.py",
+    "evals/run_pipeline.py",
+    "evals/grade_search.py",
+    "evals/grade_report.py",
+    "evals/sanity_checks.py",
+    "evals/data/drb/tasks.jsonl",
+    "evals/data/drb/criteria.jsonl",
+    "evals/data/drb/reference.jsonl",
+    "uv.lock"
+  ],
+  "approved_at": "2026-10-24T15:51:01"
+}

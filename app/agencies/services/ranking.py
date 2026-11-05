@@ -54,6 +54,25 @@ def _ranked_items_from_api_results(
     return formatted_results
 
 
+# Rerank rate limits are per minute (Cohere trial keys allow ~10 calls/min), so a
+# 1-2s backoff on 429 just burns through the retries. Honor Retry-After when sent.
+RATE_LIMIT_BASE_DELAY_S = 6.0
+MAX_RETRY_DELAY_S = 60.0
+
+
+def _retry_delay(attempt: int, initial_delay_s: float, exc: Optional[Exception]) -> float:
+    """Seconds to wait before the next rerank attempt."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = exc.response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return min(float(retry_after), MAX_RETRY_DELAY_S)
+            except ValueError:
+                pass
+        return min(RATE_LIMIT_BASE_DELAY_S * (2**attempt), MAX_RETRY_DELAY_S) + random.uniform(0, 1.0)
+    return (initial_delay_s * (2**attempt)) + random.uniform(0, 0.5)
+
+
 async def rerank_with_cohere_api(
     query: str,
     documents: List[str],
@@ -63,7 +82,7 @@ async def rerank_with_cohere_api(
     relevance_threshold: float = 0.1,
     top_n: Optional[int] = None,
     timeout: int = 20,
-    max_retries: int = 2,
+    max_retries: int = 4,
     initial_delay_s: float = 1.0,
 ) -> List[RankedItem]:
     """Rerank documents using Cohere's /v1/rerank API."""
@@ -145,17 +164,14 @@ async def rerank_with_cohere_api(
             raise RankingAPIError(f"Unexpected error processing Cohere Rerank response: {e}") from e
 
         if attempt < max_retries:
-            delay = (initial_delay_s * (2**attempt)) + random.uniform(0, 0.5)
+            delay = _retry_delay(attempt, initial_delay_s, last_exception)
             logger.info(f"Retrying Cohere rerank in {delay:.2f} seconds...")
             await asyncio.sleep(delay)
-        else:
-            logger.error(
-                f"Cohere reranking failed after {max_retries + 1} attempts. Last: {type(last_exception).__name__}: {last_exception}"
-            )
-            return []
 
-    logger.error("Exited retry loop unexpectedly in rerank_with_cohere_api")
-    return []
+    # Raise rather than return [] so callers can tell "nothing relevant" apart from "rerank unavailable".
+    raise RankingAPIError(
+        f"Cohere reranking failed after {max_retries + 1} attempts. Last: {type(last_exception).__name__}: {last_exception}"
+    )
 
 
 async def rerank_documents(
@@ -169,7 +185,7 @@ async def rerank_documents(
     relevance_threshold: float = 0.1,
     top_n: Optional[int] = None,
     timeout: int = 20,
-    max_retries: int = 2,
+    max_retries: int = 4,
     initial_delay_s: float = 1.0,
 ) -> List[RankedItem]:
     """Dispatch to Cohere or Together rerank implementation."""
@@ -209,7 +225,7 @@ async def rerank_with_together_api(
     relevance_threshold: float = 0.1,
     top_n: Optional[int] = None,
     timeout: int = 20,
-    max_retries: int = 2, # e.g., 0=initial try, 1=retry1, 2=retry2 (total 3 attempts)
+    max_retries: int = 4,  # total attempts = max_retries + 1
     initial_delay_s: float = 1.0
 ) -> List[RankedItem]: # Updated return type hint
     """
@@ -239,7 +255,7 @@ async def rerank_with_together_api(
         ConfigurationError: If the api_key is not provided.
         RankingAPIError: If the API call fails with a non-retryable error, 
                        or if the API returns an unexpected response format.
-                       (Returns [] if retries are exhausted on transient errors).
+                       Also raised once retries on transient errors are exhausted.
     """
     if not api_key:
         raise ConfigurationError("Together API key must be provided.")
@@ -338,18 +354,13 @@ async def rerank_with_together_api(
 
         # If we are here, a retryable error occurred
         if attempt < max_retries:
-            # Calculate delay with exponential backoff and jitter
-            delay = (initial_delay_s * (2 ** attempt)) + random.uniform(0, 0.5)
+            delay = _retry_delay(attempt, initial_delay_s, last_exception)
             logger.info(f"Retrying in {delay:.2f} seconds...")
             await asyncio.sleep(delay)
-        else:
-            logger.error(f"Reranking failed after {max_retries + 1} attempts. Last error: {type(last_exception).__name__}: {last_exception}")
-            # Return empty list instead of raising an error after exhausting retries
-            return []
 
-    # Should technically be unreachable if max_retries >= 0, but as a fallback:
-    logger.error("Exited retry loop unexpectedly in rerank_with_together_api")
-    return []
+    raise RankingAPIError(
+        f"Together reranking failed after {max_retries + 1} attempts. Last error: {type(last_exception).__name__}: {last_exception}"
+    )
 
 # Example Usage (Async)
 async def _test_async():

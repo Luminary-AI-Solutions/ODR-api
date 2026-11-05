@@ -1,16 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import logging
-import traceback
 import uuid
-import json
-import asyncio
-from typing import Dict, Any, Optional
 import os
 from contextlib import asynccontextmanager # Import asynccontextmanager
 
-# Import configuration
-from .core.config import AppSettings
 # Import custom exceptions (Keep all as they are used by handlers)
 from .core.exceptions import (
     DeepResearchError, ConfigurationError, ValidationError, LLMError,
@@ -19,45 +13,13 @@ from .core.exceptions import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 
-# Firebase Admin SDK Imports
-import firebase_admin
-from firebase_admin import credentials, firestore
-
 # --- Import Agency Routers ---
 from app.agencies.deep_research.routes import router as deep_research_router
 from app.agencies.cpe.routes import router as cpe_router # Import CPE router
 
-# --- Import Shared State ---
-from .core import state
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# --- Firebase Initialization Function ---
-# def initialize_firebase(): # No longer needed here
-#     """Initializes the Firebase Admin SDK and sets the global db state."""
-#     try:
-#         firebase_cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_JSON")
-#         if not firebase_cred_path:
-#             logger.warning("FIREBASE_SERVICE_ACCOUNT_KEY_JSON env var not set. Firestore integration disabled.")
-#             return # Exit initialization if path not set
-#
-#         if not os.path.exists(firebase_cred_path):
-#              logger.warning(f"Firebase credentials file not found at: {firebase_cred_path}. Firestore integration disabled.")
-#              return # Exit initialization if file not found
-#
-#         cred = credentials.Certificate(firebase_cred_path)
-#         firebase_admin.initialize_app(cred)
-#         state.db = firestore.client() # Initialize the db instance in core.state
-#         logger.info("Firebase Admin SDK initialized successfully via lifespan.")
-#     except ValueError as e:
-#          logger.error(f"Error initializing Firebase Admin SDK (likely invalid creds path/format): {e}", exc_info=False)
-#          # state.db remains None
-#     except Exception as e:
-#         logger.critical(f"CRITICAL ERROR: Failed to initialize Firebase Admin SDK during startup: {e}", exc_info=True)
-#         # state.db remains None
-
 
 # --- Lifespan Context Manager ---
 @asynccontextmanager
@@ -85,7 +47,6 @@ async def lifespan(app: FastAPI):
             )
     except Exception as ex:
         logger.warning("Could not log OpenRouter startup diagnostics: %s", ex)
-    # initialize_firebase() # REMOVED: Initialization now handled by dependency
     logger.info("Application startup: Service initialization complete.")
     yield
     # Actions to perform on shutdown (optional)
@@ -100,12 +61,8 @@ app = FastAPI(
     lifespan=lifespan # Add the lifespan manager here
 )
 
-# --- Global Task Tracking (Accessed by agency routers) ---
-# TODO: Move to app.core.state
-# active_tasks: Dict[str, asyncio.Task] = {} # Now defined in core.state
-
 # --- Import Core Dependencies ---
-from .core.dependencies import get_settings, get_api_keys
+from .core.dependencies import get_settings
 
 # --- Global Exception Handlers (Apply to all routes) --- #
 
@@ -184,7 +141,6 @@ async def generic_exception_handler(request: Request, exc: Exception):
     error_id = uuid.uuid4()
     error_type = type(exc).__name__
     logger.critical(f"Unhandled Exception (ID: {error_id}): {error_type}", exc_info=True)
-    # traceback.print_exc()
     return JSONResponse(
         status_code=500,
         content={"detail": f"An internal server error occurred. Error ID: {error_id}"},
@@ -193,7 +149,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # --- Root Endpoint --- #
 @app.get("/")
 async def root():
-    _ = get_settings() # Depends() will resolve this using the imported function
+    _ = get_settings()  # Fails fast if required settings are missing
     return {"message": "ODR Multi-Agency API is running."}
 
 # --- Include Agency Routers ---
@@ -208,14 +164,11 @@ app.include_router(
     prefix="/cpe",
     tags=["Company Profile Extractor"]
 )
-# Add other agency routers here in the future
-# app.include_router(another_agency_router, prefix="/another_agency", tags=["Another Agency"])
 
 # --- CORS Middleware --- #
-# TODO: Make origins configurable via settings
-allowed_origins = [
-    "*" # Temporarily allow all origins for testing
-]
+# Comma-separated list, e.g. CORS_ALLOWED_ORIGINS="https://app.example.com,http://localhost:3000".
+# Defaults to "*" for local development.
+allowed_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,

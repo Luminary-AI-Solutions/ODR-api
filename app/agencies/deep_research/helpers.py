@@ -8,6 +8,7 @@ from app.core.exceptions import ScrapingError, ConfigurationError, SearchAPIErro
 from ..services.scraper import WebScraper, ExtractionResult
 from ..services.search import SearchResult, SearchTask
 from ..services.ranking import rerank_documents, RankedItem
+from ..services import jev as jev_service
 
 # --- Service Imports ---
 from ..services.search import execute_batch_serper_search, SerperConfig
@@ -268,6 +269,118 @@ async def rerank_search_results_helper(
         return search_results # Fallback
 
 
+async def rerank_search_results_by_query(
+    results_by_query: Dict[str, List[SearchResult]],
+    model: str,
+    api_key: str,
+    threshold: float,
+    min_per_query: int,
+    logger: logging.Logger,
+    rerank_provider: Literal["cohere", "together"] = "cohere",
+    provider_base_url: Optional[str] = None,
+    exclude_links: Optional[set] = None,
+    scorer: Optional[Any] = None,
+) -> tuple[List[SearchResult], Dict[str, str]]:
+    """Reranks each sub-query's results against that sub-query, not the full research prompt.
+
+    Long multi-part research prompts get low absolute rerank scores, so a fixed threshold against them
+    dropped most relevant results (the search eval measured 43% reranker recall). Scoring against the
+    focused sub-query that retrieved a result keeps scores meaningful, and keeping at least `min_per_query`
+    results per sub-query means no aspect of the task is wiped out entirely.
+
+    Returns the kept results merged round-robin by per-query rank (so the top of the list covers every
+    sub-query), and a map of link -> the sub-query it was kept for (used to rerank its chunks).
+
+    `scorer(query, docs) -> scores`, if given, replaces the rerank API (e.g. Jev); `threshold` is on its scale.
+    """
+    exclude_links = exclude_links or set()
+    kept_by_query: Dict[str, List[SearchResult]] = {}
+    for query, results in results_by_query.items():
+        candidates, seen = [], set()
+        for res in results:
+            link = str(res.link)
+            if link not in exclude_links and link not in seen:
+                candidates.append(res)
+                seen.add(link)
+        if not candidates:
+            continue
+        docs = [f"{res.title}\n{res.snippet or ''}" for res in candidates]
+        try:
+            if scorer is not None:
+                scores = await scorer(query, docs)
+                ordered = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+            else:
+                ranked: List[RankedItem] = await rerank_documents(
+                    query=query,
+                    documents=docs,
+                    model=model,
+                    api_key=api_key,
+                    provider=rerank_provider,
+                    base_url=provider_base_url,
+                    relevance_threshold=0.0,  # get every score; threshold and floor applied below
+                )
+                ordered = [(candidates[item.index], item.score) for item in ranked if 0 <= item.index < len(candidates)]
+        except RankingAPIError as e:
+            logger.error(f"Rerank failed for sub-query '{query}'; keeping its results in search order: {e}")
+            ordered = [(res, 0.0) for res in candidates]
+        kept = [res for rank, (res, score) in enumerate(ordered) if score >= threshold or rank < min_per_query]
+        logger.info(f"Sub-query '{query[:80]}': kept {len(kept)}/{len(candidates)} results (threshold {threshold}, floor {min_per_query}).")
+        kept_by_query[query] = kept
+
+    merged: List[SearchResult] = []
+    subquery_of: Dict[str, str] = {}
+    depth = max((len(v) for v in kept_by_query.values()), default=0)
+    for rank in range(depth):
+        for query, kept in kept_by_query.items():
+            if rank < len(kept):
+                link = str(kept[rank].link)
+                if link not in subquery_of:
+                    subquery_of[link] = query
+                    merged.append(kept[rank])
+    return merged, subquery_of
+
+
+def jev_scorer(task: str, settings: AppSettings, model: str):
+    """A `scorer` for rerank_search_results_by_query that asks Jev how well each doc answers the sub-query."""
+    async def score(query: str, docs: List[str]) -> List[float]:
+        return await jev_service.score_passages(
+            task, query, docs, api_key=settings.get_openrouter_api_key(),
+            url=jev_service.decisions_url(str(settings.openrouter_api_base)), model=model,
+        )
+    return score
+
+
+async def jev_select_chunks_helper(
+    task: str,
+    query: str,
+    chunk_dicts: List[Dict[str, Any]],
+    settings: AppSettings,
+    model: str,
+    min_score: float,
+    logger: logging.Logger,
+    top_n: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Like rerank_chunks_helper, but scored by Jev against the sub-query within the full task.
+
+    Unlike a reranker, Jev sees both the sub-question and the overall task, so a chunk that is on-topic for
+    the sub-query but useless for the task scores lower. Falls back to unranked chunks if Jev is unavailable.
+    """
+    docs = [(i, c.get('content', '')) for i, c in enumerate(chunk_dicts) if c.get('content')]
+    if not docs:
+        return []
+    try:
+        scores = await jev_service.score_passages(
+            task, query, [d for _, d in docs], api_key=settings.get_openrouter_api_key(),
+            url=jev_service.decisions_url(str(settings.openrouter_api_base)), model=model,
+        )
+    except Exception as e:
+        logger.error(f"Jev chunk scoring failed; keeping chunks unranked: {e}", exc_info=not isinstance(e, RankingAPIError))
+        return [{**chunk_dicts[i], 'score': 0.0} for i, _ in docs][:top_n]
+    kept = sorted(((i, s) for (i, _), s in zip(docs, scores) if s >= min_score), key=lambda x: x[1], reverse=True)
+    logger.info(f"Jev kept {len(kept)}/{len(docs)} chunks (min score {min_score}).")
+    return [{**chunk_dicts[i], 'score': s} for i, s in kept][:top_n]
+
+
 async def rerank_chunks_helper(
     query: str,
     chunk_dicts: List[Dict[str, Any]],
@@ -277,6 +390,7 @@ async def rerank_chunks_helper(
     logger: logging.Logger,
     rerank_provider: Literal["cohere", "together"] = "cohere",
     provider_base_url: Optional[str] = None,
+    top_n: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Reranks text chunks based on query relevance using the ranking service.
 
@@ -288,11 +402,13 @@ async def rerank_chunks_helper(
         api_key: API key for the ranking service.
         threshold: Relevance score threshold.
         logger: Logger instance.
+        top_n: If set, keep at most this many chunks (highest scores first).
 
     Returns:
         A list of chunk dictionaries filtered and sorted by relevance score, 
         with the score added to the dictionary under the key 'score'.
-        Returns an empty list if reranking fails critically or no chunks pass.
+        Returns an empty list if no chunks pass. If the rerank call itself fails,
+        returns all chunks unranked with score 0.0 so the source is not lost.
     """
     if not chunk_dicts:
         return []
@@ -330,14 +446,12 @@ async def rerank_chunks_helper(
                 logger.debug(f"Kept chunk index {original_list_index} (Score: {item.score:.4f}) from {link}")
             else:
                 logger.warning(f"Reranker returned invalid mapped chunk index {original_list_index}")
-        return reranked_chunks_list
-    except RankingAPIError as e:
-        logger.error(f"Chunk reranking service failed: {e}", exc_info=False)
-        # On failure, return empty list as we can't determine relevance
-        return []
+        return reranked_chunks_list[:top_n]
     except Exception as e:
-        logger.error(f"Unexpected error during chunk reranking: {e}", exc_info=True)
-        return []
+        # A rerank outage (e.g. rate limiting) says nothing about relevance, so keep the source's
+        # chunks in document order with a neutral score rather than silently dropping the source.
+        logger.error(f"Chunk reranking failed; keeping chunks unranked: {e}", exc_info=not isinstance(e, RankingAPIError))
+        return [{**chunk_dicts[i], 'score': 0.0} for i in indices_used][:top_n]
 
 
 # --- Scraping Helper --- #

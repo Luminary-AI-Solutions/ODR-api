@@ -126,3 +126,12 @@ testoutput.json
 
 # Firebase key
 odr-key.json
+
+# Eval outputs: keep results/notes, ignore bulky artifacts (regenerate with evals/*.py)
+.claude/hillclimb/pipeline/
+.claude/hillclimb/**/traces/
+.claude/hillclimb/**/details/
+.claude/hillclimb/**/report.html
+.claude/hillclimb/**/trajectory/
+.claude/hillclimb/chunk_selection/*/pools/
+.claude/hillclimb/chunk_selection/*/selections/

@@ -1,0 +1,72 @@
+{
+  "flow": "search_quality",
+  "description": "UMBRELA (Bing relevance prompt, 0-3). Aspect metrics judge each passage against the sub-query that retrieved it (relevant = grade >= 2); task_* metrics judge against the full research task.",
+  "metrics": [
+    {
+      "id": "rerank_ndcg10",
+      "label": "nDCG@10",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "rerank_p10",
+      "label": "P@10",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "rerank_recall",
+      "label": "Rerank recall",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "serp_precision",
+      "label": "SERP precision",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "serp_relevance",
+      "label": "SERP rel 0-3",
+      "kind": "float",
+      "scale": 3
+    },
+    {
+      "id": "context_precision",
+      "label": "Ctx precision",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "context_relevance",
+      "label": "Ctx rel 0-3",
+      "kind": "float",
+      "scale": 3
+    },
+    {
+      "id": "task_ndcg10",
+      "label": "Task nDCG@10",
+      "kind": "float",
+      "scale": 1
+    },
+    {
+      "id": "context_task_rel",
+      "label": "Ctx task rel",
+      "kind": "float",
+      "scale": 3
+    }
+  ],
+  "perf_fields": [
+    {
+      "id": "judge_cost_usd",
+      "label": "judge $",
+      "unit": "$"
+    },
+    {
+      "id": "latency_s",
+      "label": "grade s",
+      "unit": "s"
+    }
+  ]
+}
